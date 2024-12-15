@@ -27,9 +27,7 @@ public:
 private slots:
     // 槽函数，用于响应按钮点击事件
     void onNewPatientClicked(); // 新建患者
-    void onStartFingerCollection(); // 启动指夹仪数据采集
-    void onStartWristCollection(); // 启动手腕脉搏仪数据采集
-    void onStartCameraCollection(); // 启动摄像头数据采集
+
     // 开始数据采集
     void onStartAllDataCollection();
     // 停止数据采集

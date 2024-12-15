@@ -7,6 +7,7 @@
 #include <QTextStream>
 #include <QInputDialog>
 #include <QDateTime>
+#include <Python.h>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -18,9 +19,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 连接信号和槽
     connect(ui->newPatientButton, &QPushButton::clicked, this, &MainWindow::onNewPatientClicked);
-    connect(ui->startFingerButton, &QPushButton::clicked, this, &MainWindow::onStartFingerCollection);
-    connect(ui->startWristButton, &QPushButton::clicked, this, &MainWindow::onStartWristCollection);
-    connect(ui->startCameraButton, &QPushButton::clicked, this, &MainWindow::onStartCameraCollection);
+
     // 连接信号与槽
     connect(ui->startAllDataCollection, &QPushButton::clicked, this, &MainWindow::onStartAllDataCollection);
     connect(ui->stopAllDataCollection, &QPushButton::clicked, this, &MainWindow::onStopAllDataCollection);
@@ -86,54 +85,6 @@ void MainWindow::updatePatientList()
     }
 }
 
-//void MainWindow::onStartFingerCollection()
-//{
-//    QString patientId = ui->patientListWidget->currentItem()->text();  // 获取选中的患者编号
-//    if (patientId.isEmpty()) {
-//        QMessageBox::warning(this, "警告", "请先选择患者！");
-//        return;
-//    }
-
-//    // 创建保存文件的路径
-//    QDir dir("C:/patients_data");  // 假设在 C:/patients_data 下保存数据
-//    if (!dir.exists()) {
-//        dir.mkpath(".");  // 如果文件夹不存在，则创建它
-//    }
-
-//    QString patientDir = dir.absoluteFilePath(patientId);
-//    if (!QDir(patientDir).exists()) {
-//        QDir().mkdir(patientDir);  // 如果患者文件夹不存在，创建它
-//    }
-
-//    QString csvFilePath = patientDir + "/pulse_data.csv";  // 定义 CSV 文件路径
-
-//    // 启动 Python 进程
-//    QProcess *process = new QProcess(this);
-//    QString pythonScriptPath = "python";  // Python 路径（可以改为绝对路径）
-//    QString scriptPath = "scripts/datacollector1.py";  // Python 脚本路径
-//    QStringList arguments;
-//    arguments << scriptPath << csvFilePath;  // 传递文件路径作为参数
-
-//    // 连接信号和槽
-//    connect(process, &QProcess::finished, this, &MainWindow::onProcessFinished);
-
-//    // 启动进程
-//    process->start(pythonScriptPath, arguments);
-//}
-
-//void MainWindow::onStartWristCollection()
-//{
-//    QString patientId = ui->patientListWidget->currentItem()->text(); // 获取当前选择的患者编号
-//    QString scriptPath = "python3 /path/to/wrist_device_script.py"; // 手腕脉搏仪采集脚本
-//    startDataCollection(scriptPath, patientId, ui->wristStatusLabel);
-//}
-
-//void MainWindow::onStartCameraCollection()
-//{
-//    QString patientId = ui->patientListWidget->currentItem()->text(); // 获取当前选择的患者编号
-//    QString scriptPath = "scripts/camera.py"; // 摄像头采集脚本
-//    startDataCollection(scriptPath, patientId, ui->cameraStatusLabel);
-//}
 
 void MainWindow::onStartAllDataCollection()
 {
