@@ -124,3 +124,4 @@ yarg==0.1.9
 zipp==3.6.0
 pyqt5
 pyqtgraph
+

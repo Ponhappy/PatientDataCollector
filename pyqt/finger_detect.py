@@ -1,66 +1,73 @@
-# finger_detect.py
-
 import serial
-import datetime
-import openpyxl
+import csv
+import time
+from datetime import datetime
 
-def save_finger_pulse(serial_port, file_path):
-    # 设置串口参数
-    port = serial_port  # 动态传递串口端口
-    baudrate = 115200
-    timeout = 1
-    # 初始化串口
-    ser = serial.Serial(port, baudrate, timeout=timeout)
-    print("串口无问题")
 
-    # 创建一个新的 Excel 工作簿和工作表
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Sensor Data"
+def save_finger_pulse(csv_filename,COM):
+    # 打开串口连接
+    ser = serial.Serial(COM, baudrate=38400, timeout=1, bytesize=8, stopbits=1, parity='N')
 
-    # 添加表头
-    ws.append(["Timestamp", "Waveform", "Heartbeat", "Heart Rate", "HRV"])
+    if not ser.is_open:
+        print("串口没有打开")
+        ser.open()
+    print("串口已打开")
+    # 向串口发送启动命令 (0x8A)
+    ser.write(bytes([0x8A]))  # 发送单个字节 0x8A 启动设备
+    time.sleep(0.5)  # 等待设备响应的时间
 
+    # 存储接收到的脉搏数据
+    received_data = []
+    timestamps = []  # 存储时间戳
+
+
+
+    # 读取数据并保存为 CSV 文件
     try:
-        row_count = 0  # 用于记录已写入的行数
+        print("进入获取指尖数据")
         while True:
-            flag = ser.readline()
-            if flag and flag[-1] == 0xff:  # 检查最后一个字节是否为 0xff
-                print("无效输入")
+            # print("开始循环")
+            # print("ser.in_waiting:",ser.in_waiting)
+            if ser.in_waiting > 0:  # 检查串口是否有数据
+                # 读取一行数据
+                raw_data = ser.read(ser.in_waiting)  # 读取所有可用的数据
+                print(raw_data)
+                hex_data = raw_data.hex().upper()  # 转换为大写的十六进制字符串
+
+                # 将十六进制数据拆分成字节，并用空格分隔
+                formatted_data = " ".join([hex_data[i:i + 2] for i in range(0, len(hex_data), 2)])
+
+                # 时间戳
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+                # 保存数据（时间戳，十六进制字节数据）
+                received_data.append([timestamp, formatted_data])
+                timestamps.append(timestamp)
+                # print("formatted_data:",formatted_data)
+
+            # 你可以根据需要停止或限定读取时长
+            # 假设你希望读取 100 行数据，然后结束循环
+            if len(received_data) >= 10:
+                
+                print("达到10，退出循环")
                 break
-            # 读取一行数据
-            data = ser.readline().decode('ascii').strip()
 
-            # 检查数据格式，确保包含四个由逗号分隔的值
-            if data:
-                parts = data.split(',')
-                if len(parts) == 4:
-                    # 获取当前时间戳
-                    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            # 为了避免高CPU占用，可以适当休息一下
+            time.sleep(0.1)
 
-                    # 将数据和时间戳一起写入 Excel 文件
-                    try:
-                        ws.append([
-                            timestamp,
-                            float(parts[0]),
-                            float(parts[1]),
-                            float(parts[2]),
-                            float(parts[3])
-                        ])
-                        row_count += 1
-                    except ValueError:
-                        print(f"数据格式错误: {data}")
-
-                    # 每 1000 条记录保存一次文件以避免内存过多
-                    if row_count % 1000 == 0:
-                        wb.save(file_path)
-                        print(f"已保存 {row_count} 条记录到 {file_path}")
-    except KeyboardInterrupt:
-        print("程序中断")
     finally:
-        # 最后保存一次文件
-        wb.save(file_path)
-        print(f"Pulse data saved to {file_path}")
-
-        # 关闭串口
+        print("关闭串口连接")
+        # 关闭串口连接
         ser.close()
+        print("Serial connection closed.")
+
+
+    with open(csv_filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Timestamp",  "Data"])  # 写入表头
+        for idx, data in enumerate(received_data):
+            writer.writerow([data[0],  data[1]])  # 写入每一行数据
+
+
+
+# save_finger_pulse("1.csv","COM3")

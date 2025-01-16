@@ -15,11 +15,14 @@ from finger_detect import save_finger_pulse
 from wrist_detect import save_wrist_pulse
 import os
 import threading
-from wave import wrist_PlotWidget
+from wave import finger_PlotWidget
 import serial
 import serial.tools.list_ports
 import json
 from datetime import datetime
+from wrist_thread import WristDataThread
+from finger_thread import FingerDataThread
+from camera_thread import CameraThread
 
 class AddUserDialog(QDialog):
     def __init__(self, parent=None):
@@ -65,127 +68,89 @@ class Ui_MainWindow(QWidget):
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         self.centralwidget.setObjectName("centralwidget")
 
-        self.verticalLayoutWidget = QtWidgets.QWidget(self.centralwidget)
-        self.verticalLayoutWidget.setGeometry(QtCore.QRect(20, 40, 1400, 900))
-        self.verticalLayoutWidget.setObjectName("verticalLayoutWidget")
-        self.verticalLayout = QtWidgets.QVBoxLayout(self.verticalLayoutWidget)
-        self.verticalLayout.setContentsMargins(0, 0, 0, 0)
-        self.verticalLayout.setObjectName("verticalLayout")
-        self.horizontalLayout_4 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_4.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
-        self.horizontalLayout_4.setObjectName("horizontalLayout_4")
-        
-        # 添加开始检测按钮
-        self.start_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.start_b.sizePolicy().hasHeightForWidth())
-        self.start_b.setSizePolicy(sizePolicy)
-        self.start_b.setObjectName("start_b")
-        self.horizontalLayout_4.addWidget(self.start_b)
+        # 创建主垂直布局
+        self.main_layout = QtWidgets.QVBoxLayout(self.centralwidget)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(10)
+
+        # 创建一个水平布局来包含控制按钮和串口选择
+        self.control_layout = QtWidgets.QHBoxLayout()
+        self.main_layout.addLayout(self.control_layout)
+
+        # 开始检测按钮
+        self.start_b = QtWidgets.QPushButton("开始检测", self.centralwidget)
+        self.control_layout.addWidget(self.start_b)
         self.start_b.clicked.connect(self.start_all_sensor)
 
-        # 添加视频窗口标签
-        self.video_l = QtWidgets.QLabel(self.verticalLayoutWidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.video_l.sizePolicy().hasHeightForWidth())
-        self.video_l.setSizePolicy(sizePolicy)
-        self.video_l.setObjectName("video_l")
-        self.horizontalLayout_4.addWidget(self.video_l)
-        
-        # 添加截图按钮
-        self.cut_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.cut_b.sizePolicy().hasHeightForWidth())
-        self.cut_b.setSizePolicy(sizePolicy)
-        self.cut_b.setObjectName("cut_b")
-        self.horizontalLayout_4.addWidget(self.cut_b)
+        # 视频窗口标签
+        self.video_l = QtWidgets.QLabel("视频窗口", self.centralwidget)
+        self.video_l.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.video_l.setAlignment(QtCore.Qt.AlignCenter)
+        self.control_layout.addWidget(self.video_l)
+
+        # 截图按钮
+        self.cut_b = QtWidgets.QPushButton("截图", self.centralwidget)
+        self.control_layout.addWidget(self.cut_b)
         self.cut_b.clicked.connect(self.capture)
 
-        # 添加舌像窗口标签
-        self.screenshot_l = QtWidgets.QLabel(self.verticalLayoutWidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.screenshot_l.sizePolicy().hasHeightForWidth())
-        self.screenshot_l.setSizePolicy(sizePolicy)
-        self.screenshot_l.setObjectName("screenshot_l")
-        self.horizontalLayout_4.addWidget(self.screenshot_l)
+        # 舌像窗口标签
+        self.screenshot_l = QtWidgets.QLabel("舌像窗口", self.centralwidget)
+        self.screenshot_l.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.screenshot_l.setAlignment(QtCore.Qt.AlignCenter)
+        self.control_layout.addWidget(self.screenshot_l)
 
-        # 添加面像窗口标签
-        self.face_l = QtWidgets.QLabel(self.verticalLayoutWidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.face_l.sizePolicy().hasHeightForWidth())
-        self.face_l.setSizePolicy(sizePolicy)
-        self.face_l.setObjectName("face_l")
-        self.horizontalLayout_4.addWidget(self.face_l)
+        # 面像窗口标签
+        self.face_l = QtWidgets.QLabel("面像窗口", self.centralwidget)
+        self.face_l.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.face_l.setAlignment(QtCore.Qt.AlignCenter)
+        self.control_layout.addWidget(self.face_l)
 
-        # 添加串口选择相关控件
-        # Wrist serial port
-        self.wrist_serial_label = QtWidgets.QLabel(self.verticalLayoutWidget)
-        self.wrist_serial_label.setText("选择手腕串口:")
-        self.horizontalLayout_4.addWidget(self.wrist_serial_label)
+        # 串口选择控件
+        # 手腕串口
+        self.wrist_serial_label = QtWidgets.QLabel("选择手腕串口:", self.centralwidget)
+        self.control_layout.addWidget(self.wrist_serial_label)
 
-        self.wrist_serial_combo = QComboBox(self.verticalLayoutWidget)
-        self.horizontalLayout_4.addWidget(self.wrist_serial_combo)
+        self.wrist_serial_combo = QComboBox(self.centralwidget)
+        self.control_layout.addWidget(self.wrist_serial_combo)
 
-        self.confirm_wrist_serial_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
-        self.confirm_wrist_serial_b.setText("确认手腕串口")
-        self.horizontalLayout_4.addWidget(self.confirm_wrist_serial_b)
+        self.confirm_wrist_serial_b = QtWidgets.QPushButton("确认手腕串口", self.centralwidget)
+        self.control_layout.addWidget(self.confirm_wrist_serial_b)
         self.confirm_wrist_serial_b.clicked.connect(self.confirm_wrist_serial_selection)
 
-        # Finger serial port
-        self.finger_serial_label = QtWidgets.QLabel(self.verticalLayoutWidget)
-        self.finger_serial_label.setText("选择指夹串口:")
-        self.horizontalLayout_4.addWidget(self.finger_serial_label)
+        # 指夹串口
+        self.finger_serial_label = QtWidgets.QLabel("选择指夹串口:", self.centralwidget)
+        self.control_layout.addWidget(self.finger_serial_label)
 
-        self.finger_serial_combo = QComboBox(self.verticalLayoutWidget)
-        self.horizontalLayout_4.addWidget(self.finger_serial_combo)
+        self.finger_serial_combo = QComboBox(self.centralwidget)
+        self.control_layout.addWidget(self.finger_serial_combo)
 
-        self.confirm_finger_serial_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
-        self.confirm_finger_serial_b.setText("确认指夹串口")
-        self.horizontalLayout_4.addWidget(self.confirm_finger_serial_b)
+        self.confirm_finger_serial_b = QtWidgets.QPushButton("确认指夹串口", self.centralwidget)
+        self.control_layout.addWidget(self.confirm_finger_serial_b)
         self.confirm_finger_serial_b.clicked.connect(self.confirm_finger_serial_selection)
         
-        # 添加用户选择相关控件
-        self.user_label = QtWidgets.QLabel(self.verticalLayoutWidget)
-        self.user_label.setText("选择用户:")
-        self.horizontalLayout_4.addWidget(self.user_label)
+        # 用户选择控件
+        self.user_label = QtWidgets.QLabel("选择用户:", self.centralwidget)
+        self.control_layout.addWidget(self.user_label)
 
-        self.user_combo = QComboBox(self.verticalLayoutWidget)
-        self.horizontalLayout_4.addWidget(self.user_combo)
+        self.user_combo = QComboBox(self.centralwidget)
+        self.control_layout.addWidget(self.user_combo)
 
-        self.add_user_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
-        self.add_user_b.setText("添加用户")
-        self.horizontalLayout_4.addWidget(self.add_user_b)
+        self.add_user_b = QtWidgets.QPushButton("添加用户", self.centralwidget)
+        self.control_layout.addWidget(self.add_user_b)
         self.add_user_b.clicked.connect(self.add_user)
         
-        self.verticalLayout.addLayout(self.horizontalLayout_4)
-
-        # 创建 wrist_PlotWidget 实例
-        self.plot_widget = wrist_PlotWidget()  # 不传递端口，稍后通过确认按钮设置
-        self.verticalLayout.addWidget(self.plot_widget)
+        # 创建 WristPlotWidget 实例并添加到主布局
+        # self.plot_widget = WristPlotWidget()
+        # self.main_layout.addWidget(self.plot_widget)
 
         # 添加诊断文本浏览器
-        self.diagnosis_tb = QtWidgets.QTextBrowser(self.verticalLayoutWidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Ignored)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.diagnosis_tb.sizePolicy().hasHeightForWidth())
-        self.diagnosis_tb.setSizePolicy(sizePolicy)
-        self.diagnosis_tb.setObjectName("diagnosis_tb")
-        self.verticalLayout.addWidget(self.diagnosis_tb)
+        self.diagnosis_tb = QtWidgets.QTextBrowser(self.centralwidget)
+        self.diagnosis_tb.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.main_layout.addWidget(self.diagnosis_tb)
         
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QtWidgets.QMenuBar(MainWindow)
-        self.menubar.setGeometry(QtCore.QRect(0, 0, 800, 22))
+        self.menubar.setGeometry(QtCore.QRect(0, 0, 1600, 22))
         self.menubar.setObjectName("menubar")
         MainWindow.setMenuBar(self.menubar)
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
@@ -205,8 +170,17 @@ class Ui_MainWindow(QWidget):
         # 填充用户选择框
         self.populate_users()
 
-        # 初始化指夹串口
+        # 初始化串口属性
         self.finger_serial_port = None
+        self.wrist_serial_port = None  # 新增手腕串口属性
+
+        # 初始化当前帧
+        self.current_frame = None
+
+        # 初始化数据采集线程
+        self.wrist_thread = None
+        self.finger_thread = None
+        self.camera_thread = None
 
     def populate_serial_ports(self):
         ports = serial.tools.list_ports.comports()
@@ -268,7 +242,6 @@ class Ui_MainWindow(QWidget):
             self.user_combo.setCurrentText(username)
             print(f"已添加新用户: {username}")
 
-
     def confirm_wrist_serial_selection(self):
         selected_port = self.wrist_serial_combo.currentText()
         if selected_port == "没有可用的串口":
@@ -278,7 +251,7 @@ class Ui_MainWindow(QWidget):
         # 设置手腕串口
         self.wrist_serial_port = selected_port  # 存储手腕串口
         print(f"手腕串口已设置为 {self.wrist_serial_port}")
-        
+
     def confirm_finger_serial_selection(self):
         selected_port = self.finger_serial_combo.currentText()
         if selected_port == "没有可用的串口":
@@ -315,79 +288,99 @@ class Ui_MainWindow(QWidget):
             os.makedirs(user_folder)
         self.patient_id = selected_user  # 使用用户名作为 patient_id
 
-        # Start threads for data acquisition
-        threads = []
-
-        # Start finger detect thread if serial port is selected
+        # 启动数据采集线程
+        # 1. 指夹传感器
         if self.finger_serial_port and self.finger_serial_port != "没有可用的串口":
-            t_finger = threading.Thread(
-                target=save_finger_pulse,
-                args=(self.finger_serial_port, os.path.join(user_folder, "finger_pulse.xlsx"))
-            )
-            t_finger.daemon = True  # 使线程在主线程退出时自动结束
-            threads.append(t_finger)
+            if self.finger_thread is None:
+                self.finger_thread = FingerDataThread(
+                    serial_port=self.finger_serial_port,
+                    baudrate=115200,
+                )
+                # self.finger_thread.data_received.connect(self.handle_finger_data)
+                self.finger_thread.csv_filename = os.path.join(user_folder, "finger_pulse.csv")
+                self.finger_thread.start()
+                print("指夹数据采集线程已启动。")
+            else:
+                print("指夹数据采集线程已在运行。")
         else:
             print("指夹串口未选择或初始化失败。")
 
-        # Start wrist detect thread if serial port is set
-        if self.plot_widget.ser and self.plot_widget.ser.is_open:
-            t_wrist = threading.Thread(
-                target=save_wrist_pulse,
-                args=(self.plot_widget.ser.port, os.path.join(user_folder, "wrist_pulse.csv"))
-            )
-            t_wrist.daemon = True  # 使线程在主线程退出时自动结束
-            threads.append(t_wrist)
+        # 2. 手腕传感器
+        if self.wrist_serial_port and self.wrist_serial_port != "没有可用的串口":
+            if self.wrist_thread is None:
+                self.wrist_thread = WristDataThread(
+                    serial_port=self.wrist_serial_port,
+                    baudrate=38400,
+                )
+                # self.wrist_thread.data_received.connect(self.plot_widget.update_plot)
+                self.wrist_thread.csv_filename = os.path.join(user_folder, "wrist_pulse.csv")
+                self.wrist_thread.start()
+                print("手腕数据采集线程已启动。")
+            else:
+                print("手腕数据采集线程已在运行。")
         else:
             print("手腕串口未选择或初始化失败。")
 
-        # Start camera thread
-        t_camera = threading.Thread(target=self.open_camera)
-        t_camera.daemon = True  # 使线程在主线程退出时自动结束
-        threads.append(t_camera)
+        # 3. 摄像头
+        if self.camera_thread is None:
+            self.camera_thread = CameraThread(
+                snapshot_interval=5,  # 每5秒保存一次截图
+                save_folder=user_folder,
+            )
+            self.camera_thread.frame_received.connect(self.display_camera_frame)
+            self.camera_thread.snapshot_saved.connect(self.handle_snapshot_saved)
+            self.camera_thread.start()
+            print("摄像头线程已启动。")
+        else:
+            print("摄像头线程已在运行。")
 
-        # Start all threads
-        for t in threads:
-            t.start()
+    def handle_finger_data(self, pulse_value):
+        # 如果需要实时显示指夹数据，可以实现类似于手腕数据的绘图
+        # 这里简单打印数据
+        print(f"指夹传感器数据: {pulse_value}")
+        # TODO: 可以添加一个指夹传感器的PlotWidget来实时显示数据
 
-    def open_camera(self):
-        print("打开摄像头")
-        cap = cv2.VideoCapture(0)
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if self.isCapture:  # 检查是否已经截图
-                self.update(frame) 
-                cap.release()  # 释放摄像头资源
-                cv2.destroyAllWindows()  # 关闭 cv2 窗口
-                break
-            # 一直在更新视频框里的图片
-            img = QtGui.QImage(frame.data, frame.shape[1], frame.shape[0], QtGui.QImage.Format_BGR888)
-            pixmap = QtGui.QPixmap.fromImage(img)
-            scaled_pixmap = pixmap.scaled(self.video_l.size(), QtCore.Qt.KeepAspectRatio)
-            self.video_l.setPixmap(scaled_pixmap)
-            cv2.waitKey(1)  # 修改为 1 以避免阻塞
+    def display_camera_frame(self, frame):
+        # 将OpenCV图像转换为Qt图像并显示在video_l标签中
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        height, width, channel = rgb_image.shape
+        bytes_per_line = 3 * width
+        q_img = QtGui.QImage(rgb_image.data, width, height, bytes_per_line, QtGui.QImage.Format_RGB888)
+        pixmap = QtGui.QPixmap.fromImage(q_img)
+        scaled_pixmap = pixmap.scaled(self.video_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        self.video_l.setPixmap(scaled_pixmap)
+
+    def handle_snapshot_saved(self, snapshot_path):
+        # 显示截图在face_l标签中
+        pixmap = QtGui.QPixmap(snapshot_path)
+        scaled_pixmap = pixmap.scaled(self.face_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        self.face_l.setPixmap(scaled_pixmap)
+        print(f"已显示截图: {snapshot_path}")
 
     # 对应截图的按钮
     def capture(self):
         if not hasattr(self, 'patient_id') or self.patient_id == -1:
             QtWidgets.QMessageBox.warning(self, '无用户', '请先选择或添加用户。')
             return
-        img_fp = os.path.join(self.patient_list_dp, str(self.patient_id), "tongue.jpg")
-        if self.video_l.pixmap():
-            self.video_l.pixmap().save(img_fp)
+        if hasattr(self, 'current_frame') and self.current_frame is not None:
+            img_fp = os.path.join(self.patient_list_dp, str(self.patient_id), "tongue.jpg")
+            # 保存原始帧
+            cv2.imwrite(img_fp, self.current_frame)
             print("保存完毕")
             self.isCapture = True  # 设置标志为已截图
+            # 显示截图在截图 QLabel 中
+            self.update_screenshot(self.current_frame)
         else:
-            print("没有视频帧可保存。")
+            QtWidgets.QMessageBox.warning(self, '无帧', '没有可用的帧进行保存。')
+            print("没有可用的帧进行保存。")
 
-    def update(self, frame):
+    def update_screenshot(self, frame):
         # 在这里对图像进行处理，例如打印图像的尺寸
         annotated_frame, diagnosis = tongue_diagnosis(frame)
         # 改图片标签
         img = QtGui.QImage(annotated_frame.data, annotated_frame.shape[1], annotated_frame.shape[0], QtGui.QImage.Format_BGR888)
         pixmap = QtGui.QPixmap.fromImage(img)
-        scaled_pixmap = pixmap.scaled(self.screenshot_l.size(), QtCore.Qt.KeepAspectRatio)
+        scaled_pixmap = pixmap.scaled(self.screenshot_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         self.screenshot_l.setPixmap(scaled_pixmap)
         # 更改诊断
         self.show_diagnosis(diagnosis)
@@ -405,6 +398,16 @@ class Ui_MainWindow(QWidget):
         else:
             self.killTimer(self.timer)  # 文本显示完毕，停止定时器
 
+    def closeEvent(self, event):
+        # 当窗口关闭时，确保所有线程都被正确停止
+        if self.wrist_thread is not None:
+            self.wrist_thread.stop()
+        if self.finger_thread is not None:
+            self.finger_thread.stop()
+        if self.camera_thread is not None:
+            self.camera_thread.stop()
+        event.accept()
+
 def tongue_diagnosis(img):
     class_labels = {
         0: "您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。",
@@ -413,9 +416,8 @@ def tongue_diagnosis(img):
         3: "您的舌苔厚黄，这通常表示体内有湿热，可能伴随发热、口渴、便秘等症状。厚黄舌常见于感染、炎症或消化系统疾病。建议您保持充足的水分摄入，避免辛辣刺激食物，同时可以考虑咨询专业医生进行进一步检查和调理。",
         4: "您的舌苔灰黑，这是一种较为严重的病理变化，可能与严重的感染、长期疾病、药物中毒或内脏器官的严重病变有关。灰黑舌通常提示体内存在较大的病理变化，建议您尽快就医，进行详细检查，以便及时发现并处理潜在的健康问题。"
     }
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(script_dir, 'runs', 'detect', 'train', 'weights', 'best.pt')
-    model = YOLO(model_path)  # 加载模型
+
+    model = YOLO('./runs/detect/train/weights/best.pt')  # 加载模型
     results = model(img)
     annotated_frame = results[0].plot()
     diagnosis = "没有发现舌像，请重新拍照"
