@@ -13,20 +13,23 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QPushButton
 import sys
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtWidgets import QApplication, QWidget
-from finger_detect import save_finger_pulse
-from wrist_detect import save_wrist_pulse
+# from finger_detect import save_finger_pulse
+# from wrist_detect import save_wrist_pulse
 import os
-
+import threading
+from wave import wrist_PlotWidget
+import serial 
 
 class Ui_MainWindow(QWidget):
     def setupUi(self, MainWindow):
         self.isCapture = False
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(800, 600)
+        MainWindow.resize(1600, 1200)
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         self.centralwidget.setObjectName("centralwidget")
+
         self.verticalLayoutWidget = QtWidgets.QWidget(self.centralwidget)
-        self.verticalLayoutWidget.setGeometry(QtCore.QRect(20, 40, 711, 471))
+        self.verticalLayoutWidget.setGeometry(QtCore.QRect(20, 40, 1400, 900))
         self.verticalLayoutWidget.setObjectName("verticalLayoutWidget")
         self.verticalLayout = QtWidgets.QVBoxLayout(self.verticalLayoutWidget)
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
@@ -42,9 +45,10 @@ class Ui_MainWindow(QWidget):
         sizePolicy.setHeightForWidth(self.start_b.sizePolicy().hasHeightForWidth())
         self.start_b.setSizePolicy(sizePolicy)
         self.start_b.setObjectName("start_b")
+        self.horizontalLayout_4.addWidget(self.start_b)
         self.start_b.clicked.connect(self.start_all_sensor)
 
-        self.horizontalLayout_4.addWidget(self.start_b)
+
         self.video_l = QtWidgets.QLabel(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
@@ -61,9 +65,9 @@ class Ui_MainWindow(QWidget):
         sizePolicy.setHeightForWidth(self.cut_b.sizePolicy().hasHeightForWidth())
         self.cut_b.setSizePolicy(sizePolicy)
         self.cut_b.setObjectName("cut_b")
-        self.cut_b.clicked.connect(self.capture)
-        
         self.horizontalLayout_4.addWidget(self.cut_b)
+        self.cut_b.clicked.connect(self.capture)
+
         self.screenshot_l = QtWidgets.QLabel(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
@@ -72,10 +76,26 @@ class Ui_MainWindow(QWidget):
         self.screenshot_l.setSizePolicy(sizePolicy)
         self.screenshot_l.setObjectName("screenshot_l")
         self.horizontalLayout_4.addWidget(self.screenshot_l)
+
+        self.face_l = QtWidgets.QLabel(self.verticalLayoutWidget)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.face_l.sizePolicy().hasHeightForWidth())
+        self.face_l.setSizePolicy(sizePolicy)
+        self.face_l.setObjectName("face_l")
+        self.horizontalLayout_4.addWidget(self.face_l)
+
         self.verticalLayout.addLayout(self.horizontalLayout_4)
-        self.wave_l = QtWidgets.QLabel(self.verticalLayoutWidget)
-        self.wave_l.setObjectName("wave_l")
-        self.verticalLayout.addWidget(self.wave_l)
+
+        self.plot_widget = wrist_PlotWidget()
+        self.verticalLayout.addWidget(self.plot_widget)
+
+        # self.wave_l = QtWidgets.QLabel(self.verticalLayoutWidget)
+        # self.wave_l.setObjectName("wave_l")
+        # self.verticalLayout.addWidget(self.wave_l)
+
+
         self.diagnosis_tb = QtWidgets.QTextBrowser(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Ignored)
         sizePolicy.setHorizontalStretch(0)
@@ -103,6 +123,9 @@ class Ui_MainWindow(QWidget):
         self.index = 0
         self.timer = None
 
+        
+
+
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
@@ -110,8 +133,9 @@ class Ui_MainWindow(QWidget):
         self.start_b.setText(_translate("MainWindow", "开始检测"))
         self.video_l.setText(_translate("MainWindow", "视频窗口"))
         self.cut_b.setText(_translate("MainWindow", "截图"))
-        self.screenshot_l.setText(_translate("MainWindow", "检测窗口"))
-        self.wave_l.setText(_translate("MainWindow", "波形图准备"))
+        self.screenshot_l.setText(_translate("MainWindow", "舌像窗口"))
+        self.face_l.setText(_translate("MainWindow", "面像窗口"))
+        # self.wave_l.setText(_translate("MainWindow", "波形图准备"))
 
 
 
@@ -119,9 +143,27 @@ class Ui_MainWindow(QWidget):
     def start_all_sensor(self):
         self.patient_id=find_max_number_in_folders(self.patient_list_dp)+1#新建一个大一号的文件夹
         os.makedirs(self.patient_list_dp+'/'+str(self.patient_id))
-        self.start_finger()
-        self.start_wrist()
         self.open_camera()
+        
+        # threads = []
+
+        # # 为每个函数创建一个线程
+        # t1 = threading.Thread(target=self.start_finger)
+        # threads.append(t1)
+        # t2 = threading.Thread(target=self.start_wrist)
+        # threads.append(t2)
+        # t3 = threading.Thread(target=self.open_camera)
+        # threads.append(t3)
+        # # 启动所有线程
+        # for t in threads:
+        #     t.start()
+
+        # # 可以选择等待所有线程执行完毕，这里使用join方法
+        # for t in threads:
+        #     t.join()
+        # self.start_finger()
+        # self.start_wrist()
+        # self.open_camera()
 
     def open_camera(self):
         print("打开摄像头")
@@ -171,14 +213,14 @@ class Ui_MainWindow(QWidget):
     def start_finger(self):
         print("指夹")
         finger_pulse_fp=self.patient_list_dp+"/"+str(self.patient_id)+"/finger_pulse.xlsx"
-        save_finger_pulse(finger_pulse_fp)
+        # save_finger_pulse(finger_pulse_fp)
         
 
 
     def start_wrist(self):
         print("手腕")
         wrist_pulse_fp=self.patient_list_dp+"/"+str(self.patient_id)+"/wrist_pulse.xlsx"
-        save_wrist_pulse(wrist_pulse_fp)
+        # save_wrist_pulse(wrist_pulse_fp)
 
     def show_diagnosis(self,diag):
         self.diag=diag
@@ -254,6 +296,7 @@ def find_max_number_in_folders(folder_path):
 
 
 if __name__=="__main__":
+
     app = QApplication(sys.argv)
     MainWindow1 = QMainWindow()     
     ui = Ui_MainWindow()             
