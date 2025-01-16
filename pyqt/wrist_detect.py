@@ -1,12 +1,13 @@
+# wrist_detect.py
+
 import serial
 import csv
 import time
 from datetime import datetime
 
-
-def save_wrist_pulse(csv_filename):
+def save_wrist_pulse(serial_port, csv_filename):
     # 打开串口连接
-    ser = serial.Serial('COM3', baudrate=38400, timeout=1, bytesize=8, stopbits=1, parity='N')
+    ser = serial.Serial(serial_port, baudrate=38400, timeout=1, bytesize=8, stopbits=1, parity='N')
 
     # 确保串口打开
     if not ser.is_open:
@@ -26,7 +27,7 @@ def save_wrist_pulse(csv_filename):
     # 解析数据包的函数
     def parse_packet(packet):
         # 校验包头是否正确
-        if packet[:2]!= b'\xaa\x55':
+        if packet[:2] != b'\xaa\x55':
             return None
 
         token = packet[2]
@@ -35,7 +36,6 @@ def save_wrist_pulse(csv_filename):
         # 校验令牌是否有效
         if token not in [255, 80, 81, 82, 83]:
             return None
-
 
         # 解析类型
         packet_type = packet[4]
@@ -58,23 +58,18 @@ def save_wrist_pulse(csv_filename):
     try:
         while True:
             if ser.in_waiting > 0:  # 检查串口是否有数据
-                # 读取一行数据
-                raw_data = ser.read(ser.in_waiting)  # 读取所有可用的数据
-                hex_data = raw_data.hex().upper()  # 转换为大写的十六进制字符串
-
-                # 将十六进制数据拆分成字节，并用空格分隔
-                formatted_data = " ".join([hex_data[i:i + 2] for i in range(0, len(hex_data), 2)])
-
-                # 时间戳
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-
-                # 保存数据（时间戳，十六进制字节数据）
-                received_data.append([timestamp, formatted_data])
-                timestamps.append(timestamp)
-                print(formatted_data)
-
-            # 你可以根据需要停止或限定读取时长
-            # 假设你希望读取 100 行数据，然后结束循环
+                # 读取所有可用的数据
+                raw_data = ser.read(ser.in_waiting)
+                # 解析数据包
+                parsed = parse_packet(raw_data)
+                if parsed:
+                    pulse_flag, waveform = parsed
+                    # 时间戳
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                    # 保存数据（时间戳，脉搏标志，波形数据）
+                    received_data.append([timestamp, pulse_flag, waveform])
+                    print(f"Timestamp: {timestamp}, Pulse Flag: {pulse_flag}, Waveform: {waveform}")
+            # 假设读取 50 条数据，然后结束循环
             if len(received_data) >= 50:
                 break
 
@@ -89,8 +84,8 @@ def save_wrist_pulse(csv_filename):
     # 将数据保存为 CSV 文件
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Timestamp", "Data"])  # 写入表头
-        for idx, data in enumerate(received_data):
-            writer.writerow([data[0], data[1]])  # 写入每一行数据
+        writer.writerow(["Timestamp", "Pulse Flag", "Waveform"])  # 写入表头
+        for data in received_data:
+            writer.writerow(data)  # 写入每一行数据
 
     print(f"Pulse data saved to {csv_filename}")

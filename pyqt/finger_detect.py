@@ -1,11 +1,12 @@
+# finger_detect.py
+
 import serial
 import datetime
 import openpyxl
 
-
-def save_finger_pulse(file_path):
+def save_finger_pulse(serial_port, file_path):
     # 设置串口参数
-    port = 'COM5'  # 替换为你的串口号
+    port = serial_port  # 动态传递串口端口
     baudrate = 115200
     timeout = 1
     # 初始化串口
@@ -35,21 +36,31 @@ def save_finger_pulse(file_path):
                 parts = data.split(',')
                 if len(parts) == 4:
                     # 获取当前时间戳
-                    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
                     # 将数据和时间戳一起写入 Excel 文件
-                    ws.append([timestamp, int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])])
-                    row_count += 1
+                    try:
+                        ws.append([
+                            timestamp,
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]),
+                            float(parts[3])
+                        ])
+                        row_count += 1
+                    except ValueError:
+                        print(f"数据格式错误: {data}")
 
                     # 每 1000 条记录保存一次文件以避免内存过多
                     if row_count % 1000 == 0:
                         wb.save(file_path)
-
+                        print(f"已保存 {row_count} 条记录到 {file_path}")
     except KeyboardInterrupt:
         print("程序中断")
     finally:
         # 最后保存一次文件
         wb.save(file_path)
+        print(f"Pulse data saved to {file_path}")
 
         # 关闭串口
         ser.close()
