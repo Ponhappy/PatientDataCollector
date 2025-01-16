@@ -74,7 +74,7 @@ import serial
 
 
 class wrist_PlotWidget(QWidget):
-    def __init__(self, duration=30000):  # 默认持续时间为 10 秒（10000 毫秒）
+    def __init__(self,  port='COM5', baudrate=115200, duration=30000):  # 默认持续时间为 10 秒（10000 毫秒）
         super().__init__()
         self.plot_widget = pg.PlotWidget()
         # 禁用鼠标交互
@@ -94,15 +94,13 @@ class wrist_PlotWidget(QWidget):
         # 启动定时器
         self.start_timer()
 
-        self.port = 'COM5'  # 替换为你的串口号
-        self.baudrate = 115200
+        # self.port = 'COM5'  # 替换为你的串口号
+        # self.baudrate = 115200
+        self.port = None  # 初始时不设置串口
+        self.baudrate = baudrate
         self.timeout = 1
-        # 初始化串口
-        try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-        except serial.SerialException as e:
-            print(f"Failed to open serial port: {e}")
-            self.ser = None
+        self.ser = None  # 串口对象
+        
 
         self.duration = duration  # 定时器持续时间，单位为毫秒
         self.start_time = QtCore.QDateTime.currentDateTime().toMSecsSinceEpoch()  # 记录定时器开始时间
@@ -113,9 +111,22 @@ class wrist_PlotWidget(QWidget):
         self.timer.timeout.connect(self.timerEvent)
         self.timer.start(100)  # 每 100 毫秒更新一次曲线
 
+    def set_serial_port(self, port, baudrate=115200):
+        # 如果已经有串口打开，先关闭
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+            print(f"关闭之前的串口: {self.port}")
+        self.port = port
+        self.baudrate = baudrate
+        try:
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+            print(f"串口 {self.port} 已打开")
+        except serial.SerialException as e:
+            print(f"无法打开串口 {self.port}: {e}")
+            self.ser = None
 
     def timerEvent(self):
-        if self.ser is not None:
+        if self.ser is not None and self.ser.is_open: # 确保只有在串口打开的情况下才读取数据，并检查数据格式是否正确。
             try:
                 # 从串口读取数据
                 data = self.ser.readline().decode('ascii').strip()

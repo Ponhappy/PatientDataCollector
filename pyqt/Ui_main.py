@@ -9,7 +9,7 @@
 from ultralytics import YOLO
 import cv2
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QPushButton
+from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QPushButton,QComboBox, QLabel
 import sys
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtWidgets import QApplication, QWidget
@@ -19,6 +19,7 @@ import os
 import threading
 from wave import wrist_PlotWidget
 import serial 
+import serial.tools.list_ports
 
 class Ui_MainWindow(QWidget):
     def setupUi(self, MainWindow):
@@ -38,6 +39,7 @@ class Ui_MainWindow(QWidget):
         self.horizontalLayout_4.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
         self.horizontalLayout_4.setObjectName("horizontalLayout_4")
         
+        # 添加开始检测按钮
         self.start_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
@@ -48,7 +50,7 @@ class Ui_MainWindow(QWidget):
         self.horizontalLayout_4.addWidget(self.start_b)
         self.start_b.clicked.connect(self.start_all_sensor)
 
-
+        # 添加视频窗口标签
         self.video_l = QtWidgets.QLabel(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
@@ -58,6 +60,7 @@ class Ui_MainWindow(QWidget):
         self.video_l.setObjectName("video_l")
         self.horizontalLayout_4.addWidget(self.video_l)
         
+        # 添加截图按钮
         self.cut_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
@@ -68,6 +71,7 @@ class Ui_MainWindow(QWidget):
         self.horizontalLayout_4.addWidget(self.cut_b)
         self.cut_b.clicked.connect(self.capture)
 
+        # 添加舌像窗口标签
         self.screenshot_l = QtWidgets.QLabel(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
@@ -77,6 +81,7 @@ class Ui_MainWindow(QWidget):
         self.screenshot_l.setObjectName("screenshot_l")
         self.horizontalLayout_4.addWidget(self.screenshot_l)
 
+        # 添加面像窗口标签
         self.face_l = QtWidgets.QLabel(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
@@ -86,16 +91,26 @@ class Ui_MainWindow(QWidget):
         self.face_l.setObjectName("face_l")
         self.horizontalLayout_4.addWidget(self.face_l)
 
+        # 添加串口选择相关控件
+        self.serial_label = QtWidgets.QLabel(self.verticalLayoutWidget)
+        self.serial_label.setText("选择串口:")
+        self.horizontalLayout_4.addWidget(self.serial_label)
+
+        self.serial_combo = QComboBox(self.verticalLayoutWidget)
+        self.horizontalLayout_4.addWidget(self.serial_combo)
+
+        self.confirm_serial_b = QtWidgets.QPushButton(self.verticalLayoutWidget)
+        self.confirm_serial_b.setText("确认串口")
+        self.horizontalLayout_4.addWidget(self.confirm_serial_b)
+        self.confirm_serial_b.clicked.connect(self.confirm_serial_selection)
+        
         self.verticalLayout.addLayout(self.horizontalLayout_4)
 
-        self.plot_widget = wrist_PlotWidget()
+        # 创建 wrist_PlotWidget 实例
+        self.plot_widget = wrist_PlotWidget()  # 不传递端口，稍后通过确认按钮设置
         self.verticalLayout.addWidget(self.plot_widget)
 
-        # self.wave_l = QtWidgets.QLabel(self.verticalLayoutWidget)
-        # self.wave_l.setObjectName("wave_l")
-        # self.verticalLayout.addWidget(self.wave_l)
-
-
+        # 添加诊断文本浏览器
         self.diagnosis_tb = QtWidgets.QTextBrowser(self.verticalLayoutWidget)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Ignored)
         sizePolicy.setHorizontalStretch(0)
@@ -104,6 +119,7 @@ class Ui_MainWindow(QWidget):
         self.diagnosis_tb.setSizePolicy(sizePolicy)
         self.diagnosis_tb.setObjectName("diagnosis_tb")
         self.verticalLayout.addWidget(self.diagnosis_tb)
+        
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QtWidgets.QMenuBar(MainWindow)
         self.menubar.setGeometry(QtCore.QRect(0, 0, 800, 22))
@@ -115,6 +131,22 @@ class Ui_MainWindow(QWidget):
 
         self.retranslateUi(MainWindow)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
+        
+        # 填充串口选择框
+        self.populate_serial_ports()
+
+        #
+        self.patient_id = -1  # 最新病人的id
+        self.patient_list_dp = os.path.dirname(__file__) + '/user_packages'  # 存储病人信息的文件夹,在当前文件夹创建一个user_packages就行
+        self.diag = ''
+        self.index = 0
+        self.timer = None
+
+
+        # self.wave_l = QtWidgets.QLabel(self.verticalLayoutWidget)
+        # self.wave_l.setObjectName("wave_l")
+        # self.verticalLayout.addWidget(self.wave_l)
+
 
         #
         self.patient_id=-1#最新病人的id
@@ -126,7 +158,30 @@ class Ui_MainWindow(QWidget):
         
 
 
-
+    def populate_serial_ports(self):
+        ports = serial.tools.list_ports.comports()
+        self.serial_combo.clear()
+        for port in ports:
+            self.serial_combo.addItem(port.device)
+        if ports:
+            self.serial_combo.setCurrentIndex(0)
+        else:
+            self.serial_combo.addItem("没有可用的串口")
+            
+    def confirm_serial_selection(self):
+        selected_port = self.serial_combo.currentText()
+        if selected_port == "没有可用的串口":
+            print("没有可用的串口，无法启动传感器。")
+            return
+        print(f"选择的串口: {selected_port}")
+        # 设置串口到 wrist_PlotWidget
+        self.plot_widget.set_serial_port(selected_port, 115200)
+        if self.plot_widget.ser:
+            print("串口初始化成功。")
+        else:
+            print("串口初始化失败。")   
+            
+                     
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
