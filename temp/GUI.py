@@ -106,7 +106,7 @@ class Ui_MainWindow(QMainWindow):
         self.pushButton_4.clicked.connect(self.startDetection)
         # self.image_path = ''
 
-        self.model = YOLO('./runs/detect/train/weights/best.pt')  # 加载模型
+        self.model = YOLO('C:/Users/HP/Desktop/zhongyi1223/0116/PatientDataCollector/pyqt/run/detect/train/weights/best.pt')  # 加载模型
         self.cap = cv2.VideoCapture(0)  # 打开摄像头
         
         # 创建保存图片和标签的文件夹

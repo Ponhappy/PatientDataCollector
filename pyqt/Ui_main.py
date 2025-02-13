@@ -85,24 +85,30 @@ class Ui_MainWindow(QWidget):
         # 视频窗口标签
         self.video_l = QtWidgets.QLabel("视频窗口", self.centralwidget)
         self.video_l.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        # self.video_1.setFixedSize(800, 600)  # 设置舌像窗口标签大小为800x600
         self.video_l.setAlignment(QtCore.Qt.AlignCenter)
+    
         self.control_layout.addWidget(self.video_l)
+        # self.control_layout.setStretchFactor(self.video_1, 2)
 
-        # 截图按钮
-        self.cut_b = QtWidgets.QPushButton("截图", self.centralwidget)
-        self.control_layout.addWidget(self.cut_b)
-        self.cut_b.clicked.connect(self.capture)
+        # # 截图按钮
+        # self.cut_b = QtWidgets.QPushButton("截图", self.centralwidget)
+        # self.control_layout.addWidget(self.cut_b)
+        # self.cut_b.clicked.connect(self.capture)
 
         # 舌像窗口标签
         self.screenshot_l = QtWidgets.QLabel("舌像窗口", self.centralwidget)
         self.screenshot_l.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.screenshot_l.setAlignment(QtCore.Qt.AlignCenter)
+        # self.screenshot_l.setFixedSize(800, 600)  # 设置舌像窗口标签大小为800x600
         self.control_layout.addWidget(self.screenshot_l)
 
         # 面像窗口标签
         self.face_l = QtWidgets.QLabel("面像窗口", self.centralwidget)
         self.face_l.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        # self.face_l.setFixedSize(800, 600)  # 设置舌像窗口标签大小为800x600
         self.face_l.setAlignment(QtCore.Qt.AlignCenter)
+        
         self.control_layout.addWidget(self.face_l)
 
         # 串口选择控件
@@ -267,7 +273,7 @@ class Ui_MainWindow(QWidget):
         MainWindow.setWindowTitle(_translate("MainWindow", "Patient Data Collector"))
         self.start_b.setText(_translate("MainWindow", "开始检测"))
         self.video_l.setText(_translate("MainWindow", "视频窗口"))
-        self.cut_b.setText(_translate("MainWindow", "截图"))
+        # self.cut_b.setText(_translate("MainWindow", "截图"))
         self.screenshot_l.setText(_translate("MainWindow", "舌像窗口"))
         self.face_l.setText(_translate("MainWindow", "面像窗口"))
         self.wrist_serial_label.setText(_translate("MainWindow", "选择手腕串口:"))
@@ -322,10 +328,14 @@ class Ui_MainWindow(QWidget):
             print("手腕串口未选择或初始化失败。")
 
         # 3. 摄像头
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(script_dir, 'runs', 'detect', 'train', 'weights', 'best.pt')
+        model = YOLO(model_path)  # 加载模型
         if self.camera_thread is None:
             self.camera_thread = CameraThread(
                 snapshot_interval=5,  # 每5秒保存一次截图
                 save_folder=user_folder,
+                yolo_model=model
             )
             self.camera_thread.frame_received.connect(self.display_camera_frame)
             self.camera_thread.snapshot_saved.connect(self.handle_snapshot_saved)
@@ -341,6 +351,16 @@ class Ui_MainWindow(QWidget):
         # TODO: 可以添加一个指夹传感器的PlotWidget来实时显示数据
 
     def display_camera_frame(self, frame):
+        """
+        显示摄像头画面，并根据flip_mode参数翻转图像。
+        
+        :param frame: OpenCV捕获的图像帧
+        :param flip_mode: 翻转模式，可选值为0（垂直翻转）、1（水平翻转）、-1（同时水平垂直翻转），默认为None（不翻转）
+        """
+        # 根据flip_mode参数翻转图像
+        # if flip_mode is not None:
+        frame = cv2.flip(frame, 0)
+        
         # 将OpenCV图像转换为Qt图像并显示在video_l标签中
         rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         height, width, channel = rgb_image.shape
@@ -349,11 +369,16 @@ class Ui_MainWindow(QWidget):
         pixmap = QtGui.QPixmap.fromImage(q_img)
         scaled_pixmap = pixmap.scaled(self.video_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         self.video_l.setPixmap(scaled_pixmap)
+        annotated_frame, diagnosis = tongue_diagnosis(frame)
+        self.show_diagnosis(diagnosis)
 
     def handle_snapshot_saved(self, snapshot_path):
         # 显示截图在face_l标签中
         pixmap = QtGui.QPixmap(snapshot_path)
-        scaled_pixmap = pixmap.scaled(self.face_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        transform = QtGui.QTransform()
+        transform = transform.scale(1, -1)  # 垂直翻转
+        transformed_pixmap = pixmap.transformed(transform)
+        scaled_pixmap = transformed_pixmap.scaled(self.face_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
         self.face_l.setPixmap(scaled_pixmap)
         print(f"已显示截图: {snapshot_path}")
 
@@ -408,6 +433,7 @@ class Ui_MainWindow(QWidget):
             self.camera_thread.stop()
         event.accept()
 
+
 def tongue_diagnosis(img):
     class_labels = {
         0: "您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。",
@@ -417,17 +443,30 @@ def tongue_diagnosis(img):
         4: "您的舌苔灰黑，这是一种较为严重的病理变化，可能与严重的感染、长期疾病、药物中毒或内脏器官的严重病变有关。灰黑舌通常提示体内存在较大的病理变化，建议您尽快就医，进行详细检查，以便及时发现并处理潜在的健康问题。"
     }
 
-    model = YOLO('./runs/detect/train/weights/best.pt')  # 加载模型
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, 'runs', 'detect', 'train', 'weights', 'best.pt')
+    # model = YOLO(model_path)  # 加载模型
+    # model_path = './runs/detect/train/weights/best.pt'
+    if not os.path.exists(model_path):
+        print(f"模型文件不存在：{model_path}")
+        return img, "模型文件不存在，请检查模型路径"
+
+    model = YOLO(model_path)  # 加载模型
     results = model(img)
+    if not results:
+        print("您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。")
+        return img, "未检测到舌像，请重新拍照"
+
     annotated_frame = results[0].plot()
     diagnosis = "没有发现舌像，请重新拍照"
     for result in results:
         class_ids = result.boxes.cls.numpy()  # 获取类别索引数组
         for class_id in class_ids:
             diagnosis = class_labels.get(int(class_id), "未知类别")
-
-    print(diagnosis)
+   
+    print("您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。")
     return annotated_frame, diagnosis
+
 
 def find_max_number_in_folders(folder_path):
     max_number = 0  # 初始化最大数字为 0
