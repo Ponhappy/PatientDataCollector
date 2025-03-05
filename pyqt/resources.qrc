@@ -1,0 +1,13 @@
+<!DOCTYPE RCC>
+<RCC>
+    <qresource prefix="/">
+        <file>icons/add_user.png</file>
+        <file>icons/camera.png</file>
+        <file>icons/capture.png</file>
+        <file>icons/sensor.png</file>
+        <file>icons/stop.png</file>
+        <file>icons/tongue.png</file>
+        <file>icons/refresh.png</file>
+    </qresource>
+</RCC> 
+<!-- pyrcc5 -o resources_rc.py resources.qrc -->
