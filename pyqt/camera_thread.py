@@ -4,17 +4,18 @@ from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QWaitCondition
 import cv2
 import time
 from PyQt5.QtMultimedia import QSound
-from tongue_detection import detect_tongue
 import os
 from queue import Queue
 from threading import Thread
+import numpy as np
 
 class CameraThread(QThread):
     frame_received = pyqtSignal(object)  # 传递OpenCV帧
     snapshot_saved = pyqtSignal(str)      # 传递保存的快照路径
     face_detected = pyqtSignal(bool)      # 传递人脸检测结果
-    tongue_detected = pyqtSignal(bool)    # 传递舌象检测结果
+    tongue_detected = pyqtSignal(bool, np.ndarray)  # 传递舌象检测结果
     guidance_message = pyqtSignal(str)    # 发送引导消息信号
+    tongue_diagnosis_ready = pyqtSignal(object)  # 新增信号
 
     # 添加工作模式常量
     MODE_PREVIEW = 0  # 仅预览模式，不保存图像
@@ -30,7 +31,7 @@ class CameraThread(QThread):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.yolo_model = yolo_model
         
-        # 新增：图像处理相关
+        # 图像处理相关设置
         self.frame_queue = Queue(maxsize=30)  # 最多缓存30帧
         self.processing_enabled = False  # 是否启用处理
         self.save_enabled = True  # 是否保存图像
@@ -64,7 +65,7 @@ class CameraThread(QThread):
         return True
 
     def run(self):
-        """主线程：根据不同模式处理图像"""
+        """主线程：动态切换预览和拍摄模式"""
         if not self.start_camera():
             return
             
@@ -73,48 +74,65 @@ class CameraThread(QThread):
         self.processor_thread.daemon = True
         self.processor_thread.start()
         
-        last_guidance_time = time.time()
-        
+        last_guidance_time = 0
+        last_capture_time = 0
+        capture_duration = 2  # 检测到舌头后持续拍摄时间(秒)
+
         while self.running:
             ret, frame = self.cap.read()
-            if ret:
-                current_time = time.time()
-                
-                # 预览模式：降低频率发送帧到UI显示
-                if self.working_mode == self.MODE_PREVIEW:
-                    if current_time - self.last_preview_time >= self.preview_interval:
-                        # 缩放图像以减小数据量
-                        if self.preview_scale < 1.0:
-                            h, w = frame.shape[:2]
-                            preview_frame = cv2.resize(frame, (int(w*self.preview_scale), 
-                                                              int(h*self.preview_scale)))
-                        else:
-                            preview_frame = frame
-                        
-                        # 发送预览帧
-                        self.frame_received.emit(preview_frame)
-                        self.last_preview_time = current_time
-                
-                # 拍摄模式：正常将帧加入处理队列
-                elif self.working_mode == self.MODE_CAPTURE:
-                    # 发送原始帧用于显示
-                    self.frame_received.emit(frame)
+            if not ret:
+                continue
+
+            current_time = time.time()
+            tongue_detected = False
+
+            # 执行舌头检测
+            if self.tongue_detection_enabled:
+                try:
+                    tongue_detected, confidence, bbox = self.detect_tongue(frame)
+                except Exception as e:
+                    print(f"舌头检测出错: {str(e)}")
+                    tongue_detected = False
+
+                # 动态模式切换
+                if tongue_detected:
+                    # 进入拍摄诊断模式
+                    self.working_mode = self.MODE_CAPTURE
+                    last_capture_time = current_time
                     
-                    # 将帧加入处理队列（非阻塞）
-                    if not self.frame_queue.full():
-                        self.frame_queue.put(frame)
-                
-                # 处理舌头检测引导消息（两种模式都可以）
-                if self.tongue_detection_enabled:
-                    if current_time - last_guidance_time > self.guidance_interval and not self.has_tongue:
-                        self.guidance_message.emit("请将舌头放在摄像头前方")
+                    # 发送完整帧用于诊断
+                    self.tongue_diagnosis_ready.emit(frame.copy())
+                else:
+                    # 超过拍摄持续时间后切回预览模式
+                    if current_time - last_capture_time > capture_duration:
+                        self.working_mode = self.MODE_PREVIEW
+
+            # 模式处理逻辑
+            if self.working_mode == self.MODE_PREVIEW:
+                # 预览模式：降低帧率显示缩放图像
+                if current_time - self.last_preview_time >= self.preview_interval:
+                    preview_frame = cv2.resize(frame, (0,0), fx=self.preview_scale, fy=self.preview_scale)
+                    self.frame_received.emit(preview_frame)
+                    self.last_preview_time = current_time
+
+                # 显示引导提示
+                if self.tongue_detection_enabled and not tongue_detected:
+                    if current_time - last_guidance_time > self.guidance_interval:
+                        self.guidance_message.emit("请伸出舌头进行检测")
                         last_guidance_time = current_time
+
+            elif self.working_mode == self.MODE_CAPTURE:
+                # 拍摄模式：发送原始帧并保存
+                self.frame_received.emit(frame)
                 
-            time.sleep(0.01)  # 降低CPU使用率
-            
-        # 结束时释放资源
-        if self.cap is not None:
-            self.cap.release()
+                # 定期保存图像（示例：每秒1张）
+                if current_time - self.last_save_time >= 1.0:
+                    self.save_snapshot(frame)
+                    self.last_save_time = current_time
+
+            time.sleep(0.01)
+        
+        self.cap.release()
 
     def process_frames(self):
         """处理线程：从队列获取图像并进行处理、保存"""
@@ -127,8 +145,8 @@ class CameraThread(QThread):
                 if self.frame_count % self.frames_to_skip == 0:
                     # 如果启用了舌头检测，检测舌头
                     if self.tongue_detection_enabled:
-                        self.has_tongue = self.detect_tongue_present(frame)
-                        self.tongue_detected.emit(self.has_tongue)
+                        self.has_tongue = self.detect_tongue(frame)
+                        self.tongue_detected.emit(self.has_tongue, frame.copy())
                     
                     # 如果启用了保存且达到保存间隔，保存图像
                     current_time = time.time()
@@ -141,12 +159,13 @@ class CameraThread(QThread):
                 # 队列为空时短暂休眠
                 time.sleep(0.01)
 
-    def detect_tongue_present(self, frame):
+    def detect_tongue(self, frame):
         """舌头检测预处理接口"""
         # 这里是舌头检测的预留接口
         # 后续可以接入实际的舌头检测算法
-        # 当前返回假值，表示没有检测到舌头
-        return False
+        # return False
+        return True, 0.9, (50, 50, 100, 100)  # (detected, confidence, bbox)
+    
 
     def detect_face(self, frame):
         """人脸检测"""

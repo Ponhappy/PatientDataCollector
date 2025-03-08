@@ -177,27 +177,20 @@ class ModernUI(QMainWindow):
         self.start_camera_btn = self.create_action_button("启动摄像头", ":/icons/camera.png")
         self.start_camera_btn.clicked.connect(self.start_camera_only)
         
-        self.camera_mode_btn = self.create_action_button("开始拍摄", ":/icons/capture.png")
-        self.camera_mode_btn.clicked.connect(self.toggle_camera_mode)
-        
         self.start_sensors_btn = self.create_action_button("开始传感器采集", ":/icons/sensor.png")
         self.start_sensors_btn.clicked.connect(self.start_sensors_only)
         
         self.stop_sensors_btn = self.create_action_button("停止传感器采集", ":/icons/stop.png")
         self.stop_sensors_btn.clicked.connect(self.stop_sensors)
         
-        self.tongue_detection_btn = self.create_action_button("启用舌头检测", ":/icons/tongue.png")
-        self.tongue_detection_btn.clicked.connect(self.toggle_tongue_detection)
-        
+
         self.refresh_devices_btn = self.create_action_button("刷新设备列表", ":/icons/refresh.png")
         self.refresh_devices_btn.clicked.connect(self.refresh_devices)
         
         # 添加按钮到操作布局
         operation_layout.addWidget(self.start_camera_btn)
-        operation_layout.addWidget(self.camera_mode_btn)
         operation_layout.addWidget(self.start_sensors_btn)
         operation_layout.addWidget(self.stop_sensors_btn)
-        operation_layout.addWidget(self.tongue_detection_btn)
         operation_layout.addWidget(self.refresh_devices_btn)
         
         # 将所有组添加到控制面板
@@ -564,7 +557,7 @@ class ModernUI(QMainWindow):
         MainWindow.setWindowTitle(_translate("MainWindow", "Patient Data Collector"))
         self.start_b.setText(_translate("MainWindow", "开始采集传感器数据"))
         self.camera_b.setText(_translate("MainWindow", "开始摄像头采集"))
-        self.video_l.setText(_translate("MainWindow", "视频窗口"))
+        self.video_display.setText(_translate("MainWindow", "视频窗口"))
         # self.cut_b.setText(_translate("MainWindow", "截图"))
         self.screenshot_l.setText(_translate("MainWindow", "舌像窗口"))
         self.face_l.setText(_translate("MainWindow", "面像窗口"))
@@ -578,7 +571,7 @@ class ModernUI(QMainWindow):
         self.stop_camera_b.setText(_translate("MainWindow", "停止摄像头采集"))
         self.camera_label.setText(_translate("MainWindow", "选择摄像头:"))
         self.confirm_camera_b.setText(_translate("MainWindow", "确认摄像头"))
-        self.camera_mode_b.setText(_translate("MainWindow", "开始拍摄"))
+        self.camera_mode_btn.setText(_translate("MainWindow", "开始拍摄"))
 
     # 仅启动指夹和手腕传感器
     def start_sensors_only(self):
@@ -656,20 +649,18 @@ class ModernUI(QMainWindow):
                 yolo_model=model,
                 camera_index=self.camera_index
             )
-            
+            self.camera_thread.tongue_detection_enabled = True 
             # 连接信号
             self.camera_thread.frame_received.connect(self.display_camera_frame)
             self.camera_thread.snapshot_saved.connect(self.handle_snapshot_saved)
             self.camera_thread.tongue_detected.connect(self.handle_tongue_detected)
             self.camera_thread.guidance_message.connect(self.show_guidance)
             
-            # 配置摄像头线程 - 默认为预览模式
-            self.camera_thread.set_mode(CameraThread.MODE_PREVIEW)
+            # 配置摄像头线程 
             self.camera_thread.set_frames_to_skip(15)
             self.camera_thread.set_snapshot_interval(3)
             
             self.camera_thread.start()
-            self.diagnosis_tb.append("摄像头已启动（预览模式）")
             print(f"摄像头线程已启动，使用摄像头索引: {self.camera_index}")
         else:
             print("摄像头线程已在运行。")
@@ -695,20 +686,20 @@ class ModernUI(QMainWindow):
             pixmap = QtGui.QPixmap.fromImage(q_img)
             
             # 根据标签大小调整图像大小
-            pixmap = pixmap.scaled(self.video_l.width(), self.video_l.height(), 
+            pixmap = pixmap.scaled(self.video_display.width(), self.video_display.height(), 
                                    QtCore.Qt.KeepAspectRatio)
-            self.video_l.setPixmap(pixmap)
+            self.video_display.setPixmap(pixmap)
         except Exception as e:
             print(f"显示摄像头帧出错: {e}")
 
     def handle_snapshot_saved(self, snapshot_path):
-        # 显示截图在face_l标签中
+        # 显示截图在face_label标签中
         pixmap = QtGui.QPixmap(snapshot_path)
         transform = QtGui.QTransform()
         transform = transform.scale(1, -1)  # 垂直翻转
         transformed_pixmap = pixmap.transformed(transform)
-        scaled_pixmap = transformed_pixmap.scaled(self.face_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        self.face_l.setPixmap(scaled_pixmap)
+        scaled_pixmap = transformed_pixmap.scaled(self.face_label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        self.face_label.setPixmap(scaled_pixmap)
         print(f"已显示截图: {snapshot_path}")
 
     # 对应截图的按钮
@@ -742,12 +733,12 @@ class ModernUI(QMainWindow):
     def show_diagnosis(self, diag):
         self.diag = diag
         self.index = 0
-        self.diagnosis_tb.clear()  # 清空文本浏览器
+        self.diagnosis_text.clear()  # 清空文本浏览器
         self.timer = self.startTimer(100)  # 每 100 毫秒触发一次定时器事件
 
     def timerEvent(self, event):
         if self.index < len(self.diag):
-            self.diagnosis_tb.insertPlainText(self.diag[self.index])  # 插入一个字符
+            self.diagnosis_text.insertPlainText(self.diag[self.index])  # 插入一个字符
             self.index += 1
         else:
             self.killTimer(self.timer)  # 文本显示完毕，停止定时器
@@ -792,25 +783,91 @@ class ModernUI(QMainWindow):
         if self.camera_thread.working_mode == CameraThread.MODE_PREVIEW:
             # 从预览切换到拍摄模式
             self.camera_thread.set_mode(CameraThread.MODE_CAPTURE)
-            self.camera_mode_b.setText("停止拍摄")
-            self.diagnosis_tb.append("已开始舌象拍摄和分析")
+            self.camera_mode_btn.setText("停止拍摄")
+            self.diagnosis_text.append("已开始舌象拍摄和分析")
         else:
             # 从拍摄切换到预览模式
             self.camera_thread.set_mode(CameraThread.MODE_PREVIEW)
-            self.camera_mode_b.setText("开始拍摄")
-            self.diagnosis_tb.append("已停止拍摄，进入预览模式")
+            self.camera_mode_btn.setText("开始拍摄")
+            self.diagnosis_text.append("已停止拍摄，进入预览模式")
 
-    def toggle_tongue_detection(self):
-        """切换舌头检测功能的开启/关闭状态"""
-        if hasattr(self, 'camera_thread') and self.camera_thread:
-            enabled = not self.camera_thread.tongue_detection_enabled
+    def toggle_tongue_detection(self, enabled):
+        """处理舌头检测开关状态"""
+        if self.camera_thread:  # 确保摄像头线程已创建
             self.camera_thread.set_tongue_detection_enabled(enabled)
-            self.tongue_detection_btn.setText(f"{'禁用' if enabled else '启用'}舌头检测")
-            self.status_bar.showMessage(f"舌头检测已{'启用' if enabled else '禁用'}")
-            self.diagnosis_text.append(f"舌头检测功能已{'启用' if enabled else '禁用'}")
+            status = "启用" if enabled else "禁用"
+            self.status_bar.showMessage(f"舌头检测已{status}")
+            self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 舌头检测{status}")
         else:
             self.status_bar.showMessage("请先启动摄像头再操作")
-            QMessageBox.warning(self, "警告", "需要先启动摄像头才能启用舌头检测功能")
+
+    def handle_tongue_detected(self, detected, frame=None):
+        """
+        处理舌头检测结果
+        输入参数：
+        detected (bool) - 是否检测到舌头
+        frame (numpy.ndarray) - 当前摄像头帧（可选）
+        """
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            if detected:
+                # 检测到舌头时清除引导信息
+                self.clear_guidance()
+                self.status_bar.showMessage("✅ 已检测到舌头 - 请保持姿势")
+                # 存储检测到舌头的帧
+                snapshot_path = os.path.join(self.patient_list_dp, self.patient_id, f"tongue_{timestamp}.jpg")
+                cv2.imwrite(snapshot_path, frame)
+                # 执行诊断并显示结果
+                diagnosis_result = tongue_diagnosis(frame)  # 调用诊断函数
+                self.diagnosis_text.append(f"[{timestamp}] 诊断结果：{diagnosis_result}")
+                self.status_bar.showMessage(f"✅ 已检测舌头并完成诊断")
+                
+            else:
+                # 未检测到舌头时显示引导
+                self.show_guidance("未检测到舌头，👅 请伸出舌头", frame)
+            
+        except Exception as e:
+            print(f"处理舌头检测结果出错: {str(e)}")
+
+    def show_guidance(self, message, frame=None):
+        """显示检测引导提示"""
+        try:
+            # 参数类型验证
+            if not isinstance(detected, bool):
+                raise ValueError("detected参数必须是布尔类型")
+            
+            # 更新状态栏
+            status_msg = "检测到舌头" if detected else "未检测到舌头"
+            if detected and confidence > 0:
+                status_msg += f" (置信度: {confidence:.2f})"
+            self.status_bar.showMessage(status_msg)
+            
+            # 更新诊断信息
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.diagnosis_text.append(f"[{timestamp}] {status_msg}")
+            
+            # 如果有检测框信息，更新图像显示
+            if detected and bbox is not None:
+                x, y, w, h = bbox
+                # 在视频画面上绘制检测框（需要当前帧）
+                if hasattr(self, 'current_frame'):
+                    frame = self.current_frame.copy()
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                    self.display_camera_frame(frame)
+            
+            # 更新舌头检测按钮状态
+            if detected:
+                self.tongue_detection_btn.setStyleSheet("background-color: #2ecc71;")
+            else:
+                self.tongue_detection_btn.setStyleSheet("")  # 恢复默认样式
+            
+        except Exception as e:
+            error_msg = f"处理舌头检测结果时出错: {str(e)}"
+            self.status_bar.showMessage(error_msg)
+            print(error_msg)
+            # 记录错误日志
+            with open("error.log", "a") as f:
+                f.write(f"{datetime.now()} - {error_msg}\n")
 
 def tongue_diagnosis(img):
     class_labels = {
