@@ -15,9 +15,7 @@ import os #为了路径方便，之后连接成绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 
-'''
-训练自己的数据集必看注释！
-'''
+
 class YOLO_model(object):
     _defaults = {
         #--------------------------------------------------------------------------#
@@ -131,7 +129,9 @@ class YOLO_model(object):
         self.net    = YoloBody(self.num_classes, self.phi)
         device      = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
         # device      = torch.device('cpu')#在cpu上运行
-        self.net.load_state_dict(torch.load(self.model_path, map_location=device,weights_only=True))
+        self.net.load_state_dict(torch.load(self.model_path, map_location=device))
+        # 去掉weights_only参数
+        # self.net.load_state_dict(torch.load(self.model_path, map_location=device,weights_only=True))
         self.net    = self.net.eval()
         
         
@@ -306,7 +306,7 @@ class YOLO_model(object):
                         image_shape, self.letterbox_image, conf_thres = self.confidence, nms_thres = self.nms_iou)
                                                     
             if results[0] is None: #没有舌像
-                return None,None,None,None
+                return False,None,None,None
 
             top_label   = np.array(results[0][:, 6], dtype = 'int32')
             top_conf    = results[0][:, 4] * results[0][:, 5]
@@ -314,7 +314,7 @@ class YOLO_model(object):
 
 
         if len(top_label)<1:
-            return None,None,None,None#有边界框，但是没有对应的标签
+            return False,None,None,None#有边界框，但是没有对应的标签
         
         #---------------------------------------------------------#
         #   设置字体与边框厚度
@@ -380,6 +380,6 @@ class YOLO_model(object):
         #   是否进行目标的裁剪
         #---------------------------------------------------------#
         if crop:
-            return image,bbox,score,crop_image
+            return True,bbox,score,crop_image
         else:
-            return image,bbox,score,None
+            return True,bbox,score,None

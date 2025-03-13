@@ -1,26 +1,6 @@
 from ultralytics import YOLO
 import cv2
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QPushButton, QComboBox,
-    QLabel, QTextBrowser, QInputDialog, QMessageBox, QDialog, QLineEdit,
-    QFormLayout, QDialogButtonBox, QVBoxLayout, QHBoxLayout
-)
-import sys
-from PyQt5.QtWidgets import QWidget
-from finger_detect import save_finger_pulse
-from wrist_detect import save_wrist_pulse
 import os
-import threading
-from wave import finger_PlotWidget
-import serial
-import serial.tools.list_ports
-import json
-from datetime import datetime
-from wrist_thread import WristDataThread
-from finger_thread import FingerDataThread
-from camera_thread import CameraThread
-
 
 def tongue_diagnosis(img):
     class_labels = {
@@ -42,7 +22,6 @@ def tongue_diagnosis(img):
     model = YOLO(model_path)  # 加载模型
     results = model(img)
     if not results:
-        print("未检测到舌像")
         return img, "未检测到舌像，请重新拍照"
 
     annotated_frame = results[0].plot()
@@ -51,10 +30,6 @@ def tongue_diagnosis(img):
         class_ids = result.boxes.cls.numpy()  # 获取类别索引数组
         for class_id in class_ids:
             diagnosis = class_labels.get(int(class_id), "未知类别")
-
-    print(diagnosis)
+   
+   
     return annotated_frame, diagnosis
-
-
-img_path="./user_packages/30/snapshot_20250118-110036.jpg"
-tongue_diagnosis()

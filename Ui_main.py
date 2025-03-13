@@ -1,4 +1,3 @@
-
 from ultralytics import YOLO
 import cv2
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -25,6 +24,7 @@ from finger_thread import FingerDataThread
 from camera_thread import CameraThread
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QImage
+from tongue_diagnosis import tongue_diagnosis
 # import resources_rc  # 资源文件
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
@@ -181,10 +181,10 @@ class ModernUI(QMainWindow):
         self.start_camera_btn = self.create_action_button("启动摄像头", ":/icons/camera.png")
         self.start_camera_btn.clicked.connect(self.start_camera_only)
         
-        self.start_sensors_btn = self.create_action_button("开始传感器采集", ":/icons/sensor.png")
+        self.start_sensors_btn = self.create_action_button("开始脉象采集", ":/icons/sensor.png")
         self.start_sensors_btn.clicked.connect(self.start_sensors_only)
         
-        self.stop_sensors_btn = self.create_action_button("停止传感器采集", ":/icons/stop.png")
+        self.stop_sensors_btn = self.create_action_button("停止脉象采集", ":/icons/stop.png")
         self.stop_sensors_btn.clicked.connect(self.stop_sensors)
         
 
@@ -559,7 +559,7 @@ class ModernUI(QMainWindow):
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "Patient Data Collector"))
-        self.start_b.setText(_translate("MainWindow", "开始采集传感器数据"))
+        self.start_b.setText(_translate("MainWindow", "开始采集脉象数据"))
         self.camera_b.setText(_translate("MainWindow", "开始摄像头采集"))
         self.video_display.setText(_translate("MainWindow", "视频窗口"))
         self.screenshot_l.setText(_translate("MainWindow", "舌像窗口"))
@@ -570,7 +570,7 @@ class ModernUI(QMainWindow):
         self.confirm_finger_serial_b.setText(_translate("MainWindow", "确认指夹串口"))
         self.user_label.setText(_translate("MainWindow", "选择用户:"))
         self.add_user_b.setText(_translate("MainWindow", "添加用户"))
-        self.stop_sensors_b.setText(_translate("MainWindow", "停止传感器采集"))
+        self.stop_sensors_b.setText(_translate("MainWindow", "停止脉象采集"))
         self.stop_camera_b.setText(_translate("MainWindow", "停止摄像头采集"))
         self.camera_label.setText(_translate("MainWindow", "选择摄像头:"))
         self.confirm_camera_b.setText(_translate("MainWindow", "确认摄像头"))
@@ -670,26 +670,23 @@ class ModernUI(QMainWindow):
         self.patient_id = selected_user  # 使用用户名作为 patient_id
 
         # 启动摄像头线程
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(script_dir, 'runs', 'detect', 'train', 'weights', 'best.pt')
-        model = YOLO(model_path)  # 加载模型
         if self.camera_thread is None:
             self.camera_thread = CameraThread(
-                snapshot_interval=5,
+                crop_tongue_interval=5,
                 save_folder=user_folder,
-                yolo_model=model,
                 camera_index=self.camera_index
             )
             self.camera_thread.tongue_detection_enabled = True 
             # 连接信号
             self.camera_thread.frame_received.connect(self.display_camera_frame)
-            self.camera_thread.snapshot_saved.connect(self.handle_snapshot_saved)
             self.camera_thread.tongue_detected.connect(self.handle_tongue_detected)
             self.camera_thread.guidance_message.connect(self.show_guidance)
+            self.camera_thread.tongue_diagnosis_ready.connect(self.perform_tongue_diagnosis)
+            self.camera_thread.crop_tongue_saved.connect(self.handle_crop_tongue_saved)
             
             # 配置摄像头线程 
             self.camera_thread.set_frames_to_skip(15)
-            self.camera_thread.set_snapshot_interval(3)
+            self.camera_thread.set_crop_tongue_interval(3)
             
             self.camera_thread.start()
             print(f"摄像头线程已启动，使用摄像头索引: {self.camera_index}")
@@ -723,32 +720,7 @@ class ModernUI(QMainWindow):
         except Exception as e:
             print(f"显示摄像头帧出错: {e}")
 
-    def handle_snapshot_saved(self, snapshot_path):
-        # 显示截图在face_label标签中
-        pixmap = QtGui.QPixmap(snapshot_path)
-        transform = QtGui.QTransform()
-        transform = transform.scale(1, -1)  # 垂直翻转
-        transformed_pixmap = pixmap.transformed(transform)
-        scaled_pixmap = transformed_pixmap.scaled(self.face_label.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        self.face_label.setPixmap(scaled_pixmap)
-        print(f"已显示截图: {snapshot_path}")
 
-    # 对应截图的按钮
-    def capture(self):
-        if not hasattr(self, 'patient_id') or self.patient_id == -1:
-            QtWidgets.QMessageBox.warning(self, '无用户', '请先选择或添加用户。')
-            return
-        if hasattr(self, 'current_frame') and self.current_frame is not None:
-            img_fp = os.path.join(self.patient_list_dp, str(self.patient_id), "tongue.jpg")
-            # 保存原始帧
-            cv2.imwrite(img_fp, self.current_frame)
-            print("保存完毕")
-            self.isCapture = True  # 设置标志为已截图
-            # 显示截图在截图 QLabel 中
-            self.update_screenshot(self.current_frame)
-        else:
-            QtWidgets.QMessageBox.warning(self, '无帧', '没有可用的帧进行保存。')
-            print("没有可用的帧进行保存。")
 
     def update_screenshot(self, frame):
         # 在这里对图像进行处理，例如打印图像的尺寸
@@ -839,15 +811,14 @@ class ModernUI(QMainWindow):
         detected (bool) - 是否检测到舌头
         frame (numpy.ndarray) - 当前摄像头帧（可选）
         """
+        print("调用handle_tongue_detected函数")
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
             if detected:
-                # 检测到舌头时清除引导信息
-                self.clear_guidance()
                 self.status_bar.showMessage("✅ 已检测到舌头 - 请保持姿势")
-                # 存储检测到舌头的帧
-                snapshot_path = os.path.join(self.patient_list_dp, self.patient_id, f"tongue_{timestamp}.jpg")
-                cv2.imwrite(snapshot_path, frame)
+                # 存储检测到舌头的帧（在检测到的时候已经存储过一遍）
+                # snapshot_path = os.path.join(self.patient_list_dp, self.patient_id, f"tongue_{timestamp}.jpg")
+                # cv2.imwrite(snapshot_path, frame)
                 # 执行诊断并显示结果
                 diagnosis_result = tongue_diagnosis(frame)  # 调用诊断函数
                 self.diagnosis_text.append(f"[{timestamp}] 诊断结果：{diagnosis_result}")
@@ -855,13 +826,14 @@ class ModernUI(QMainWindow):
                 
             else:
                 # 未检测到舌头时显示引导
-                self.show_guidance("未检测到舌头，👅 请伸出舌头", frame)
+                self.show_guidance("未检测到舌头，👅 请伸出舌头", frame,detected)
             
         except Exception as e:
             print(f"处理舌头检测结果出错: {str(e)}")
 
-    def show_guidance(self, message, frame=None, detected=None, confidence=None, bbox=None):
+    def show_guidance(self, message, frame=None, detected=False):
         """显示检测引导提示"""
+        print("调用show_guidance函数")
         try:
             # 参数类型验证
             if not isinstance(detected, bool):
@@ -869,28 +841,8 @@ class ModernUI(QMainWindow):
             
             # 更新状态栏
             status_msg = "检测到舌头" if detected else "未检测到舌头"
-            if detected and confidence > 0:
-                status_msg += f" (置信度: {confidence:.2f})"
             self.status_bar.showMessage(status_msg)
             
-            # 更新诊断信息
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.diagnosis_text.append(f"[{timestamp}] {status_msg}")
-            
-            # 如果有检测框信息，更新图像显示
-            if detected and bbox is not None:
-                x, y, w, h = bbox
-                # 在视频画面上绘制检测框（需要当前帧）
-                if hasattr(self, 'current_frame'):
-                    frame = self.current_frame.copy()
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    self.display_camera_frame(frame)
-            
-            # 更新舌头检测按钮状态
-            if detected:
-                self.tongue_detection_btn.setStyleSheet("background-color: #2ecc71;")
-            else:
-                self.tongue_detection_btn.setStyleSheet("")  # 恢复默认样式
             
         except Exception as e:
             error_msg = f"处理舌头检测结果时出错: {str(e)}"
@@ -900,38 +852,55 @@ class ModernUI(QMainWindow):
             with open("error.log", "a") as f:
                 f.write(f"{datetime.now()} - {error_msg}\n")
 
-def tongue_diagnosis(img):
-    class_labels = {
-        0: "您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。",
-        1: "您的舌苔薄白，通常表明体内没有明显的病理变化，可能处于健康状态。然而，薄白舌也可能提示气血不足或体内寒气较重，建议注意饮食调理，适当增加营养摄入，保持身体温暖，避免寒凉食物的过量摄入。",
-        2: "您的舌苔厚白，这可能指示体内存在寒湿或痰湿，通常与消化系统功能障碍有关。厚白舌常见于脾胃虚弱、消化不良等情况，建议您关注饮食习惯，避免油腻和生冷食物，同时可以考虑适当的中药调理，以增强脾胃功能。",
-        3: "您的舌苔厚黄，这通常表示体内有湿热，可能伴随发热、口渴、便秘等症状。厚黄舌常见于感染、炎症或消化系统疾病。建议您保持充足的水分摄入，避免辛辣刺激食物，同时可以考虑咨询专业医生进行进一步检查和调理。",
-        4: "您的舌苔灰黑，这是一种较为严重的病理变化，可能与严重的感染、长期疾病、药物中毒或内脏器官的严重病变有关。灰黑舌通常提示体内存在较大的病理变化，建议您尽快就医，进行详细检查，以便及时发现并处理潜在的健康问题。"
-    }
+    def perform_tongue_diagnosis(self, frame):
+        # 实现舌头诊断逻辑
+        # 调用舌头诊断函数
+        # TODO:把舌头诊断函数放在另外的文件
+        diagnosis_result = tongue_diagnosis(frame)
+        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断结果：{diagnosis_result}")
+        pass
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(script_dir, 'runs', 'detect', 'train', 'weights', 'best.pt')
-    # model = YOLO(model_path)  # 加载模型
-    # model_path = './runs/detect/train/weights/best.pt'
-    if not os.path.exists(model_path):
-        print(f"模型文件不存在：{model_path}")
-        return img, "模型文件不存在，请检查模型路径"
+    def handle_crop_tongue_saved(self, crop_path):
+        """处理舌头裁剪图像保存事件"""
+        try:
+            self.status_bar.showMessage(f"舌头图像已保存: {crop_path}")
+        except Exception as e:
+            error_msg = f"处理舌头图像保存事件出错: {str(e)}"
+            print(error_msg)
+            with open("error.log", "a") as f:
+                f.write(f"{datetime.now()} - {error_msg}\n")
 
-    model = YOLO(model_path)  # 加载模型
-    results = model(img)
-    if not results:
-        print("您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。")
-        return img, "未检测到舌像，请重新拍照"
+# def tongue_diagnosis(img):
+#     class_labels = {
+#         0: "您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。",
+#         1: "您的舌苔薄白，通常表明体内没有明显的病理变化，可能处于健康状态。然而，薄白舌也可能提示气血不足或体内寒气较重，建议注意饮食调理，适当增加营养摄入，保持身体温暖，避免寒凉食物的过量摄入。",
+#         2: "您的舌苔厚白，这可能指示体内存在寒湿或痰湿，通常与消化系统功能障碍有关。厚白舌常见于脾胃虚弱、消化不良等情况，建议您关注饮食习惯，避免油腻和生冷食物，同时可以考虑适当的中药调理，以增强脾胃功能。",
+#         3: "您的舌苔厚黄，这通常表示体内有湿热，可能伴随发热、口渴、便秘等症状。厚黄舌常见于感染、炎症或消化系统疾病。建议您保持充足的水分摄入，避免辛辣刺激食物，同时可以考虑咨询专业医生进行进一步检查和调理。",
+#         4: "您的舌苔灰黑，这是一种较为严重的病理变化，可能与严重的感染、长期疾病、药物中毒或内脏器官的严重病变有关。灰黑舌通常提示体内存在较大的病理变化，建议您尽快就医，进行详细检查，以便及时发现并处理潜在的健康问题。"
+#     }
 
-    annotated_frame = results[0].plot()
-    diagnosis = "没有发现舌像，请重新拍照"
-    for result in results:
-        class_ids = result.boxes.cls.numpy()  # 获取类别索引数组
-        for class_id in class_ids:
-            diagnosis = class_labels.get(int(class_id), "未知类别")
+#     script_dir = os.path.dirname(os.path.abspath(__file__))
+#     model_path = os.path.join(script_dir, 'runs', 'detect', 'train', 'weights', 'best.pt')
+#     # model = YOLO(model_path)  # 加载模型
+#     # model_path = './runs/detect/train/weights/best.pt'
+#     if not os.path.exists(model_path):
+#         print(f"模型文件不存在：{model_path}")
+#         return img, "模型文件不存在，请检查模型路径"
+
+#     model = YOLO(model_path)  # 加载模型
+#     results = model(img)
+#     if not results:
+#         return img, "未检测到舌像，请重新拍照"
+
+#     annotated_frame = results[0].plot()
+#     diagnosis = "没有发现舌像，请重新拍照"
+#     for result in results:
+#         class_ids = result.boxes.cls.numpy()  # 获取类别索引数组
+#         for class_id in class_ids:
+#             diagnosis = class_labels.get(int(class_id), "未知类别")
    
-    print("您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。")
-    return annotated_frame, diagnosis
+   
+#     return annotated_frame, diagnosis
 
 
 def find_max_number_in_folders(folder_path):
