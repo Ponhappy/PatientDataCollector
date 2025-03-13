@@ -2,7 +2,13 @@ from ultralytics import YOLO
 import cv2
 import os
 
-def tongue_diagnosis(img):
+def tongue_diagnosis(crop_path):
+    # 从路径加载图像
+    print(f"舌诊分析:正从{crop_path}读取舌象图片")
+    img = cv2.imread(crop_path)
+    if img is None:
+        return None, "无法读取舌像图片"
+    
     class_labels = {
         0: "您的舌质呈现粉红色，这通常与健康的舌象相符，表明您的身体状况良好，气血充足。粉红舌通常反映出良好的生理状态，然而，如果舌质偏红，则可能提示体内存在热症，需警惕潜在的炎症或感染情况。建议定期关注身体其他症状，保持健康的生活方式。",
         1: "您的舌苔薄白，通常表明体内没有明显的病理变化，可能处于健康状态。然而，薄白舌也可能提示气血不足或体内寒气较重，建议注意饮食调理，适当增加营养摄入，保持身体温暖，避免寒凉食物的过量摄入。",

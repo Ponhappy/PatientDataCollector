@@ -18,13 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 class YOLO_model(object):
     _defaults = {
-        #--------------------------------------------------------------------------#
-        #   使用自己训练好的模型进行预测一定要修改model_path和classes_path！
-        #   model_path指向logs文件夹下的权值文件，classes_path指向model_data下的txt
-        #
-        #   训练好后logs文件夹下存在多个权值文件，选择验证集损失较低的即可。
-        #   验证集损失较低不代表mAP较高，仅代表该权值在验证集上泛化性能较好。
-        #   如果出现shape不匹配，同时要注意训练时的model_path和classes_path参数的修改
+ 
         #--------------------------------------------------------------------------#
         "model_path"        : os.path.join(current_dir, "yolo_weights/yolo_tongue.pth"),
         "classes_path"      : os.path.join(current_dir, "classes/tongue_classes.txt"),
@@ -279,6 +273,11 @@ class YOLO_model(object):
         #   在这里将图像转换成RGB图像，防止灰度图在预测时报错。
         #   代码仅仅支持RGB图像的预测，所有其它类型的图像都会转化成RGB
         #---------------------------------------------------------#
+        # 保存原始图像用于后续裁剪
+        original_image = image.copy()
+        # 获取原始图像尺寸
+        original_shape = np.array(np.shape(original_image)[0:2])
+        
         image       = cvtColor(image)
         #---------------------------------------------------------#
         #   给图像增加灰条，实现不失真的resize
@@ -340,7 +339,7 @@ class YOLO_model(object):
         left    = max(0, np.floor(left).astype('int32'))
         bottom  = min(image.size[1], np.floor(bottom).astype('int32'))
         right   = min(image.size[0], np.floor(right).astype('int32'))
-
+        
         x_min=left
         y_min=top
         x_max=right
@@ -352,7 +351,9 @@ class YOLO_model(object):
         #   是否进行目标的裁剪
         #---------------------------------------------------------#
         if crop:
-            crop_image = image.crop(bbox)
+            # crop_image = image.crop(bbox)
+            # 使用原始图像进行裁剪
+            crop_image = original_image.crop(bbox)
 
         #---------------------------------------------------------#
         #   图像绘制
