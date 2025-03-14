@@ -28,7 +28,7 @@ CATEGORY_MAP = {
     "瘀斑舌": 11
 }
 
-BASE_DIR = "color_dataset"
+BASE_DIR = "../dataset/color_dataset"
 SPLIT_RATIOS = (0.7, 0.15, 0.15)  # train, val, test
 PAGES_PER_CATEGORY = 10
 IMAGES_PER_PAGE = 35

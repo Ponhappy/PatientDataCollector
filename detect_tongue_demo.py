@@ -10,7 +10,7 @@ if __name__=="__main__":
     # 实例化 YOLO 类
     tongue_model = YOLO_model()
     # 打开单张图片，这里无论是cv2读取还是pil读取都可以，都会进入detect_single_image后变为PIL图片形式
-    image_path = 'C:/Users/HP/patient_data/4/tongue_crops/crop_20250313-180242.jpg'
+    image_path = 'C:/Users/HP/patient_data/1/tongue_crops/tongue_20250313-160009.jpg'
     image = Image.open(image_path)
 
 

@@ -10,11 +10,8 @@ from PyQt5.QtWidgets import (
 )
 import sys
 from PyQt5.QtWidgets import QWidget
-from finger_detect import save_finger_pulse
-from wrist_detect import save_wrist_pulse
 import os
 import threading
-from wave import finger_PlotWidget
 import serial
 import serial.tools.list_ports
 import json
@@ -24,7 +21,7 @@ from finger_thread import FingerDataThread
 from camera_thread import CameraThread
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QImage
-from tongue_diagnosis import tongue_diagnosis
+from tongue_diagnose_model.tongue_diagnose import tongue_diagnose_sum
 # import resources_rc  # 资源文件
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
@@ -76,6 +73,9 @@ class MainUI(QMainWindow):
         self.patient_list_dp = os.path.join(os.path.expanduser("~"), "patient_data")  # 默认存储在用户目录下
         if not os.path.exists(self.patient_list_dp):
             os.makedirs(self.patient_list_dp)  # 自动创建目录
+        
+        # 添加舌诊处理标志
+        self.tongue_diagnosed = False
         
         # 创建并设置中央窗口部件
         self.central_widget = QWidget()
@@ -487,6 +487,9 @@ class MainUI(QMainWindow):
                              "3. 其他程序是否占用了摄像头")
 
     def populate_users(self):
+        # 重置舌诊处理标志
+        self.tongue_diagnosed = False
+        
         self.user_combo.clear()
         for item in os.listdir(self.patient_list_dp):
             item_path = os.path.join(self.patient_list_dp, item)
@@ -647,6 +650,9 @@ class MainUI(QMainWindow):
 
     # 仅启动摄像头
     def start_camera_only(self):
+        # 重置舌诊处理标志
+        self.tongue_diagnosed = False
+        
         # 确保摄像头索引有效
         if self.camera_combo.currentText() == "未检测到摄像头":
             QMessageBox.critical(self, "错误", "没有可用的摄像头")
@@ -722,17 +728,6 @@ class MainUI(QMainWindow):
             print(f"显示摄像头帧出错: {e}")
 
 
-
-    def update_screenshot(self, frame):
-        # 在这里对图像进行处理，例如打印图像的尺寸
-        annotated_frame, diagnosis = tongue_diagnosis(frame)
-        # 改图片标签
-        img = QtGui.QImage(annotated_frame.data, annotated_frame.shape[1], annotated_frame.shape[0], QtGui.QImage.Format_BGR888)
-        pixmap = QtGui.QPixmap.fromImage(img)
-        scaled_pixmap = pixmap.scaled(self.screenshot_l.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        self.screenshot_l.setPixmap(scaled_pixmap)
-        # 更改诊断
-        self.show_diagnosis(diagnosis)
 
     def show_diagnosis(self, diag):
         self.diag = diag
@@ -820,12 +815,17 @@ class MainUI(QMainWindow):
     def perform_tongue_diagnosis(self, crop_path):
         # 实现舌头诊断逻辑
         # 调用舌头诊断函数
-        diagnosis_result = tongue_diagnosis(crop_path)
-        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断结果：{diagnosis_result}")
+        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(crop_path)
+        print(color_report, coating_report, cancer_report, diagnosis, treatment)
+        # self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断结果：{diagnosis_result}")
         pass
 
     def handle_new_crop_image(self, crop_path):
         """处理新裁剪的舌头图像"""
+        # 如果已经进行过诊断，则忽略后续的图像
+        if self.tongue_diagnosed:
+            return
+        
         if not os.path.exists(crop_path):
             print(f"文件不存在: {crop_path}")
             return
@@ -837,6 +837,11 @@ class MainUI(QMainWindow):
         # 执行舌诊分析
         self.perform_tongue_diagnosis(crop_path)
         
+        # 标记已完成诊断
+        self.tongue_diagnosed = True
+        self.status_bar.showMessage("舌诊分析已完成")
+        print("舌诊分析已完成，后续图像将不再触发诊断")
+
     def display_first_crop(self, path):
         """显示第一张裁剪图像"""
         pixmap = QPixmap(path)

@@ -2,7 +2,8 @@ import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
-import cancer_predict
+
+
 # ------------------ 全局配置 ------------------
 #舌苔
 CATEGORY_MAP = {
@@ -44,7 +45,7 @@ DETECTION_MODEL = YOLO("yolov8s.pt")  # 用于判断图片中是否存在舌头�
 DETECTION_CONF = 0.2  # 舌头检测置信度阈值
 
 # 训练好的癌症预测模型路径（训练代码生成的模型，一般保存在 runs_cancer/train_results/weights/ 下）
-CANCER_MODEL_PATH = "../runs/runs_coating/train_results/weights/best.pt"
+CANCER_MODEL_PATH = "tongue_diagnose_model/runs/runs_coating/train_results/weights/best.pt"
 CANCER_CONF_THRESHOLD = 0.21  # 舌苔类型预测置信度阈值
 
 # ------------------ 舌苔类型预测函数 ------------------
@@ -82,15 +83,5 @@ def predict_type_coating(image_path, conf_threshold=CANCER_CONF_THRESHOLD):
 
 # ------------------ 综合流程 ------------------
 def detect_and_predict_coating(image_path):
-    """
-    综合流程：
-      1. 首先检测图片中是否存在舌头区域
-      2. 如果检测到，再将图片输入训练好的癌症模型进行预测
-    """
-    if cancer_predict.detect_tongue(image_path):
-        predicted_category= predict_type_coating(image_path)
-        return predicted_category
-    else:
-        print("由于未检测到舌头，跳过舌苔类型预测。")
-    return 0
+    predicted_category= predict_type_coating(image_path)
 
