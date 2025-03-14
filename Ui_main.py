@@ -66,7 +66,7 @@ class AddUserDialog(QDialog):
 class MainUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("智能舌象采集分析系统")
+        self.setWindowTitle("智能中医四诊系统")
         self.setMinimumSize(1200, 800)  # 设置最小窗口大小
         
         # 初始化患者数据存储路径
@@ -76,6 +76,9 @@ class MainUI(QMainWindow):
         
         # 添加舌诊处理标志
         self.tongue_diagnosed = False
+        self.face_diagnosed = False
+        self.diagnosis_in_progress = False
+        self.use_original_frame = True  # 设置为True使用原始帧，False使用裁剪图像
         
         # 创建并设置中央窗口部件
         self.central_widget = QWidget()
@@ -196,6 +199,29 @@ class MainUI(QMainWindow):
         operation_layout.addWidget(self.start_sensors_btn)
         operation_layout.addWidget(self.stop_sensors_btn)
         operation_layout.addWidget(self.refresh_devices_btn)
+        
+        # 添加诊断控制组
+        self.diagnosis_group = QGroupBox("诊断控制")
+        self.diagnosis_layout = QVBoxLayout()
+        
+        # 创建舌诊和面诊按钮
+        self.tongue_diagnosis_btn = QPushButton("开始舌诊")
+        self.tongue_diagnosis_btn.clicked.connect(self.start_tongue_diagnosis)
+        
+        self.face_diagnosis_btn = QPushButton("开始面诊")
+        self.face_diagnosis_btn.clicked.connect(self.start_face_diagnosis)
+        
+        self.pause_camera_btn = QPushButton("暂停摄像头")
+        self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
+        self.pause_camera_btn.setEnabled(False)  # 初始状态禁用
+        
+        # 添加按钮到布局
+        self.diagnosis_layout.addWidget(self.tongue_diagnosis_btn)
+        self.diagnosis_layout.addWidget(self.face_diagnosis_btn)
+        self.diagnosis_layout.addWidget(self.pause_camera_btn)
+        
+        self.diagnosis_group.setLayout(self.diagnosis_layout)
+        operation_layout.addWidget(self.diagnosis_group)
         
         # 将所有组添加到控制面板
         control_layout.addWidget(user_group)
@@ -655,7 +681,7 @@ class MainUI(QMainWindow):
         
         # 确保摄像头索引有效
         if self.camera_combo.currentText() == "未检测到摄像头":
-            QMessageBox.critical(self, "错误", "没有可用的摄像头")
+            self.status_bar.showMessage("请先选择一个摄像头")
             return
         
         # 从下拉框获取实际摄像头索引
@@ -682,18 +708,21 @@ class MainUI(QMainWindow):
                 crop_tongue_interval=5,
                 camera_index=self.camera_index
             )
-            self.camera_thread.tongue_detection_enabled = True 
+            
             # 连接信号
             self.camera_thread.frame_received.connect(self.display_camera_frame)
-            # self.camera_thread.tongue_detected.connect(self.handle_tongue_detected)
             self.camera_thread.guidance_message.connect(self.show_guidance)
-            # self.camera_thread.tongue_diagnosis_ready.connect(self.handle_new_crop_image)
             self.camera_thread.crop_tongue_saved_path.connect(self.handle_new_crop_image)
+            self.camera_thread.original_frame_saved_path.connect(self.handle_original_frame)
             self.camera_thread.max_images_reached.connect(self.handle_max_images_reached)
             
             # 配置摄像头线程 
             self.camera_thread.set_frames_to_skip(15)
             self.camera_thread.set_crop_tongue_interval(3)
+            
+            # 连接诊断状态更新
+            self.camera_thread.set_tongue_detection_enabled(True)
+            self.camera_thread.set_diagnosis_completed(False)  # 重置诊断完成状态
             
             self.camera_thread.start()
             print(f"摄像头线程已启动，使用摄像头索引: {self.camera_index}")
@@ -812,22 +841,44 @@ class MainUI(QMainWindow):
             
             
 
-    def perform_tongue_diagnosis(self, crop_path):
-        # 实现舌头诊断逻辑
+    def perform_tongue_diagnosis(self, image_path):
+        """执行舌诊分析
+        
+        Args:
+            image_path: 图像文件路径
+            is_original_frame: 是否是原始帧图像(True)还是裁剪图像(False)
+        """
+        # 清空之前的舌诊结果
+        self.tongue_results.clear()
+        
+        
         # 调用舌头诊断函数
-        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(crop_path)
-        print(color_report, coating_report, cancer_report, diagnosis, treatment)
-        # self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断结果：{diagnosis_result}")
-        pass
+        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path)
+        
+        # 显示诊断结果到舌象标签页
+        self.tongue_results.append(f"舌色分析: {color_report}")
+        self.tongue_results.append(f"舌苔分析: {coating_report}")
+        self.tongue_results.append(f"舌体分析: {cancer_report}")
+        self.tongue_results.append(f"诊断结果: {diagnosis}")
+        self.tongue_results.append(f"建议治疗: {treatment}")
+        
+        # 只在综合诊断标签页显示基本结论
+        current_time = datetime.now().strftime('%H:%M:%S')
+        self.diagnosis_text.append(f"[{current_time}] 舌诊完成")
+        self.diagnosis_text.append(f"[{current_time}] 舌诊结论: {diagnosis}")
 
     def handle_new_crop_image(self, crop_path):
         """处理新裁剪的舌头图像"""
-        # 如果已经进行过诊断，则忽略后续的图像
-        if self.tongue_diagnosed:
+        # 如果已经进行过诊断或诊断未开始，则忽略后续的图像
+        if self.tongue_diagnosed or not self.diagnosis_in_progress:
             return
         
         if not os.path.exists(crop_path):
             print(f"文件不存在: {crop_path}")
+            return
+        
+        # 如果配置使用原始帧，则跳过裁剪图像处理
+        if self.use_original_frame:
             return
         
         # 显示第一张裁剪图
@@ -839,9 +890,47 @@ class MainUI(QMainWindow):
         
         # 标记已完成诊断
         self.tongue_diagnosed = True
+        self.diagnosis_in_progress = False
+        
+        # 通知摄像头线程诊断已完成
+        if self.camera_thread:
+            self.camera_thread.set_diagnosis_completed(True)
+        
         self.status_bar.showMessage("舌诊分析已完成")
-        print("舌诊分析已完成，后续图像将不再触发诊断")
-
+        print("使用裁剪图像完成舌诊分析")
+        
+    def handle_original_frame(self, original_path, crop_path):
+        """处理保存的原始帧图像"""
+        # 如果已经进行过诊断或诊断未开始，则忽略
+        if self.tongue_diagnosed or not self.diagnosis_in_progress:
+            return
+        
+        if not os.path.exists(original_path):
+            print(f"原始帧文件不存在: {original_path}")
+            return
+        
+        # 如果配置不使用原始帧进行舌诊，则跳过处理
+        if not self.use_original_frame:
+            return
+        
+        # 显示裁剪图
+        if not hasattr(self, 'latest_crop_path'):
+            self.display_first_crop(crop_path)
+        
+        # 使用原始帧进行舌诊分析
+        self.perform_tongue_diagnosis(original_path)
+        
+        # 标记已完成诊断
+        self.tongue_diagnosed = True
+        self.diagnosis_in_progress = False
+        
+        # 通知摄像头线程诊断已完成
+        if self.camera_thread:
+            self.camera_thread.set_diagnosis_completed(True)
+        
+        self.status_bar.showMessage("舌诊分析已完成")
+        print("使用原始帧完成舌诊分析")
+        
     def display_first_crop(self, path):
         """显示第一张裁剪图像"""
         pixmap = QPixmap(path)
@@ -849,9 +938,88 @@ class MainUI(QMainWindow):
         self.latest_crop_path = path
         
     def handle_max_images_reached(self):
+        """处理达到最大图像数量的情况"""
         self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 已达到最大舌象采集数量({self.camera_thread.max_tongue_crops}张)")
         self.status_bar.showMessage("舌象采集已完成")
+        
+        # 自动暂停摄像头
+        if self.camera_thread and self.camera_thread.isRunning():
+            self.toggle_camera_pause()
+            self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断完成，摄像头已自动暂停")
 
+    def start_tongue_diagnosis(self):
+        """开始舌诊分析流程"""
+        # 确保摄像头是运行状态
+        if self.camera_thread is None or not self.camera_thread.isRunning():
+            self.start_camera_only()  # 启动摄像头
+        
+        # 重置诊断状态
+        self.tongue_diagnosed = False
+        self.diagnosis_in_progress = True
+        self.pause_camera_btn.setEnabled(True)
+        
+        # 确保舌头检测已开启
+        if self.camera_thread:
+            self.camera_thread.set_tongue_detection_enabled(True)
+            self.camera_thread.first_image_sent = False  # 重置图像发送标志
+        
+        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始舌诊分析...")
+        self.status_bar.showMessage("请伸出舌头，系统正在进行舌诊分析...")
+
+    def start_face_diagnosis(self):
+        """开始面诊分析流程"""
+        # 确保摄像头是运行状态
+        if self.camera_thread is None or not self.camera_thread.isRunning():
+            self.start_camera_only()  # 启动摄像头
+        
+        # 重置面诊状态
+        self.face_diagnosed = False
+        self.diagnosis_in_progress = True
+        self.pause_camera_btn.setEnabled(True)
+        
+        # 这里需要添加面诊模型的启动代码
+        # self.camera_thread.set_face_detection_enabled(True)
+        
+        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始面诊分析...")
+        self.status_bar.showMessage("请面向摄像头，系统正在进行面诊分析...")
+
+    def toggle_camera_pause(self):
+        """暂停/恢复摄像头线程"""
+        if not self.camera_thread:
+            return
+        
+        if self.camera_thread.isRunning():
+            # 暂停摄像头线程
+            self.camera_thread.pause()
+            self.pause_camera_btn.setText("恢复摄像头")
+            self.status_bar.showMessage("摄像头已暂停")
+        else:
+            # 恢复摄像头线程
+            self.camera_thread.resume()
+            self.pause_camera_btn.setText("暂停摄像头")
+            self.status_bar.showMessage("摄像头已恢复")
+
+    def perform_face_diagnosis(self, image_path):
+        """执行面诊分析"""
+        # 清空之前的面诊结果
+        self.face_results.clear()
+        
+        # 添加基本信息到面象标签页
+        self.face_results.append("正在进行面诊分析...")
+        
+        # 调用面诊分析函数 (需要替换为实际的面诊函数)
+        # face_diagnosis, face_treatment = face_diagnose_model(image_path)
+        face_diagnosis = "示例面诊结果"  # 临时示例
+        face_treatment = "示例治疗建议"  # 临时示例
+        
+        # 显示诊断结果到面象标签页
+        self.face_results.append(f"面色分析: {face_diagnosis}")
+        self.face_results.append(f"建议治疗: {face_treatment}")
+        
+        # 只在综合诊断标签页显示基本结论
+        current_time = datetime.now().strftime('%H:%M:%S')
+        self.diagnosis_text.append(f"[{current_time}] 面诊完成")
+        self.diagnosis_text.append(f"[{current_time}] 面诊结论: {face_diagnosis}")
 
 
 def find_max_number_in_folders(folder_path):

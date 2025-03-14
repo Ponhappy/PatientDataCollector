@@ -23,6 +23,7 @@ class CameraThread(QThread):
     guidance_message = pyqtSignal(str)    # 发送引导消息信号
     # tongue_diagnosis_ready = pyqtSignal(object)  # 舌头诊断准备就绪信号
     crop_tongue_saved_path = pyqtSignal(str)   # 舌头裁剪图像保存信号
+    original_frame_saved_path = pyqtSignal(str, str)  # 原始帧保存信号(传递原始帧路径和对应的裁剪图路径)
     max_images_reached = pyqtSignal()  # 当达到最大图像数时发出
     
     # 添加工作模式常量
@@ -69,6 +70,12 @@ class CameraThread(QThread):
         self.preview_scale = 0.75  # 预览图像缩放比例，可提高性能
         self.preview_interval = 0.1  # 预览刷新间隔，秒
         self.last_preview_time = 0
+
+        # 添加诊断完成状态标志
+        self.diagnosis_completed = False
+
+        # 添加标志以跟踪是否已发送第一帧图像
+        self.first_image_sent = False
 
     def start_camera(self):
         """延迟初始化摄像头"""
@@ -142,33 +149,43 @@ class CameraThread(QThread):
                 
                 # 只处理部分帧以减少计算量
                 if self.frame_count % self.frames_to_skip == 0:
-                    # 如果启用了舌头检测，检测舌头
-                    if self.tongue_detection_enabled and self.tongue_model is not None:
+                    # 如果诊断未完成且启用了舌头检测，则检测舌头
+                    if not self.diagnosis_completed and self.tongue_detection_enabled and self.tongue_model is not None:
                         detected, bbox, confidence, crop_image = self.detect_tongue(frame)
                         self.has_tongue = detected
                         
-                        
-                        # 如果检测到舌头
-                        if detected:
+                        # 如果检测到舌头且没有发送过第一帧图像
+                        if detected and not self.first_image_sent:
                             # 切换到拍摄模式
                             self.working_mode = self.MODE_CAPTURE
                                 
                             # 如果启用了保存且达到保存间隔，保存图像
                             current_time = time.time()
-                            if self.save_crop_tongue_image and (current_time - self.last_save_time >= self.crop_tongue_interval) and self.tongue_crop_count < self.max_tongue_crops:
+                            if self.save_crop_tongue_image and self.tongue_crop_count < self.max_tongue_crops:
+                                # 保存裁剪图像
                                 crop_tongue_path = self.save_crop_tongue(crop_image)
+                                
+                                # 保存原始帧
+                                original_path = self.save_original_frame(frame, crop_tongue_path)
+                                
+                                # 标记已发送第一帧图像
+                                self.first_image_sent = True
+                                
+                                # 发送两个路径信号
                                 self.crop_tongue_saved_path.emit(crop_tongue_path)
+                                self.original_frame_saved_path.emit(original_path, crop_tongue_path)
+                                
                                 self.last_save_time = current_time
                                 self.tongue_crop_count += 1
-                                if self.tongue_crop_count >= self.max_tongue_crops:
-                                    self.save_crop_tongue_image = False
-                                    self.max_images_reached.emit()  # 发送信号
-                                    # 可以保留检测但不保存
-                                    self.tongue_detection_enabled = False
+                                
+                                print("已发送第一帧图像进行舌诊分析")
+                        # 对后续检测到的舌头图像的处理 (只有在未发送第一帧时才发送)
+                        elif detected and self.first_image_sent:
+                            # 继续检测但不再发送信号
+                            pass
                         else:
                             # 如果没有检测到舌头，切换回预览模式
                             self.working_mode = self.MODE_PREVIEW
-                    
                 
             else:
                 # 队列为空时短暂休眠
@@ -240,6 +257,26 @@ class CameraThread(QThread):
         """设置工作模式：预览或拍摄"""
         self.working_mode = mode
         print(f"摄像头工作模式已切换: {'预览' if mode == self.MODE_PREVIEW else '拍摄'}")
+        
+    def pause(self):
+        """暂停线程运行"""
+        self.running = False
+        # 释放摄像头资源
+        if self.cap and self.cap.isOpened():
+            self.cap.release()
+            self.cap = None
+        print("摄像头线程已暂停")
+
+    def resume(self):
+        """恢复线程运行"""
+        if self.isRunning():
+            print("摄像头线程已经在运行")
+            return  # 如果线程已经在运行，不做任何事
+        
+        self.running = True
+        self.cap = None  # 确保摄像头被重新初始化
+        self.start()  # 重新启动线程
+        print("摄像头线程已恢复")
 
     def stop(self):
         """停止线程"""
@@ -247,3 +284,29 @@ class CameraThread(QThread):
         if self.processor_thread:
             self.processor_thread.join(timeout=1.0)
         self.wait()
+
+    def set_diagnosis_completed(self, completed):
+        """设置舌诊是否已完成"""
+        self.diagnosis_completed = completed
+        if completed:
+            print("舌诊已完成，舌头检测将停止")
+            self.tongue_detection_enabled = False  # 自动禁用舌头检测
+        else:
+            # 如果重新开始诊断，重置发送图像标志
+            self.first_image_sent = False
+
+    def save_original_frame(self, frame, crop_image_path):
+        """保存包含舌头的原始帧"""
+        # 从裁剪图路径提取基本名称
+        base_dir = os.path.dirname(crop_image_path)
+        base_name = os.path.basename(crop_image_path)
+        name_without_ext = os.path.splitext(base_name)[0]
+        
+        # 创建原始帧的文件名
+        original_path = os.path.join(base_dir, f"{name_without_ext}_original.jpg")
+        
+        # 保存原始帧
+        cv2.imwrite(original_path, frame)
+        print(f"原始帧保存到: {original_path}")
+        
+        return original_path
