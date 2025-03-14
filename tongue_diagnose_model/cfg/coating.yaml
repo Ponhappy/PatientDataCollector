@@ -1,0 +1,37 @@
+path: ../dataset/coating_dataset/images  # 数据集根目录
+train: ../dataset/coating_dataset/images/train  # 训练集图片
+val: ../dataset/coating_dataset/images/val  # 验证集图片
+test: ../dataset/coating_dataset/images/test  # 测试集图片（可选）
+
+# 类别
+names:
+  0: 薄白润苔
+  1: 薄白滑苔
+  2: 白腻苔
+  3: 白滑腻苔
+  4: 白粘腻苔
+  5: 白厚腻苔
+  6: 白厚松苔
+  7: 白腻苔化燥
+  8: 黄腻苔化燥
+  9: 薄黄苔
+  10: 黄腻苔
+  11: 黄粘腻苔
+  12: 黄滑苔
+  13: 黄燥苔
+  14: 黄瓣苔
+  15: 灰白腻苔
+  16: 灰黄腻苔
+  17: 垢腻灰苔
+  18: 黑腻苔
+  19: 焦黑苔
+  20: 黑燥苔
+  21: 剥苔
+  22: 腻苔中剥
+  23: 类剥苔
+  24: 地图舌
+  25: 镜面苔
+  26: 无根苔
+  27: 薄白苔和黄厚腻苔
+  28: 黄厚粘腻苔与薄白苔
+  29: 正常舌

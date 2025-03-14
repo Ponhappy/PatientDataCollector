@@ -5,7 +5,8 @@ import serial
 import csv
 import time
 from datetime import datetime
-from wrist_detect import save_wrist_pulse
+from pulse_diagnose_model.wrist_detect import save_wrist_pulse
+
 hrv_values = []
 received_data2 = []  # 存储 COM3 数据
 

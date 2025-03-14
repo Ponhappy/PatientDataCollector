@@ -5,7 +5,7 @@ import serial
 import csv
 import time
 from datetime import datetime
-from finger_detect import save_finger_pulse
+from pulse_diagnose_model.finger_detect import save_finger_pulse
 import serial
 import csv
 import time
