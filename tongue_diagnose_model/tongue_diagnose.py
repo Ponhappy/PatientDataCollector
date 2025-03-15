@@ -190,23 +190,30 @@ def detect_tongue_box(image_path, conf_threshold=DETECTION_CONF):
     return None, None
 
 # ---------------- 舌诊辨证模块（结合三模型预测结果） ----------------
-def tongue_diagnose_sum(test_image):
+def tongue_diagnose_sum(test_image, is_original_frame=True):
     """
     结合舌色、舌苔及舌病变三个模型的预测结果，
     得出综合详细的中医舌诊报告，并生成包含各检测框（含舌头检测框）的 HTML 报告。
     """
-
-    # 处理舌头颜色预测
-    color = color_predict.detect_and_predict_color(test_image)
-    # 处理舌苔预测
-    coating = coating_predict.detect_and_predict_coating(test_image)
-    # 处理舌病变预测
-    cancer = cancer_predict.detect_and_predict_cancer(test_image)
+    if is_original_frame:
+        # 处理舌头颜色预测
+        color = color_predict.detect_and_predict_color(test_image)
+        # 处理舌苔预测
+        coating = coating_predict.detect_and_predict_coating(test_image)
+        # 处理舌病变预测
+        cancer = cancer_predict.detect_and_predict_cancer(test_image)
+    else:
+        # 处理舌头颜色预测
+        color = color_predict.predict_type_color(test_image)
+        # 处理舌苔预测
+        coating = coating_predict.predict_type_coating(test_image)
+        # 处理舌病变预测
+        cancer = cancer_predict.predict_type_cancer(test_image)       
 
     # 生成检测报告描述文字
-    color_report = f"舌色预测结果：{color}"
-    coating_report = f"舌苔预测结果：{coating}"
-    cancer_report = f"舌病变预测结果：{cancer}"
+    color_report = f"您的舌色类型诊断为：{color}"
+    coating_report = f"您的舌苔类型诊断为：{coating}"
+    cancer_report = f"您的舌病变类型诊断为：{cancer}"
 
     # 进行辨证并生成调理建议，扩充诊断结果
     diagnosis, treatment = diagnose_tongue(color, coating, cancer)

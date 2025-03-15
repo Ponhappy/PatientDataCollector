@@ -812,12 +812,11 @@ class MainUI(QMainWindow):
             # 从预览切换到拍摄模式
             self.camera_thread.set_mode(CameraThread.MODE_CAPTURE)
             self.camera_mode_btn.setText("停止拍摄")
-            self.diagnosis_text.append("已开始舌象拍摄和分析")
         else:
             # 从拍摄切换到预览模式
             self.camera_thread.set_mode(CameraThread.MODE_PREVIEW)
             self.camera_mode_btn.setText("开始拍摄")
-            self.diagnosis_text.append("已停止拍摄，进入预览模式")
+ 
 
     def toggle_tongue_detection(self, enabled):
         """处理舌头检测开关状态"""
@@ -825,7 +824,6 @@ class MainUI(QMainWindow):
             self.camera_thread.set_tongue_detection_enabled(enabled)
             status = "启用" if enabled else "禁用"
             self.status_bar.showMessage(f"舌头检测已{status}")
-            self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 舌头检测{status}")
         else:
             self.status_bar.showMessage("请先启动摄像头再操作")
 
@@ -841,7 +839,7 @@ class MainUI(QMainWindow):
             
             
 
-    def perform_tongue_diagnosis(self, image_path):
+    def perform_tongue_diagnosis(self, image_path,is_original_frame=True):
         """执行舌诊分析
         
         Args:
@@ -853,18 +851,17 @@ class MainUI(QMainWindow):
         
         
         # 调用舌头诊断函数
-        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path)
+        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path,is_original_frame)
         
         # 显示诊断结果到舌象标签页
-        self.tongue_results.append(f"舌色分析: {color_report}")
-        self.tongue_results.append(f"舌苔分析: {coating_report}")
-        self.tongue_results.append(f"舌体分析: {cancer_report}")
-        self.tongue_results.append(f"诊断结果: {diagnosis}")
-        self.tongue_results.append(f"建议治疗: {treatment}")
+        self.tongue_results.append(color_report)
+        self.tongue_results.append(coating_report)
+        self.tongue_results.append(cancer_report)
+        self.tongue_results.append(diagnosis)
+        self.tongue_results.append(treatment)
         
         # 只在综合诊断标签页显示基本结论
         current_time = datetime.now().strftime('%H:%M:%S')
-        self.diagnosis_text.append(f"[{current_time}] 舌诊完成")
         self.diagnosis_text.append(f"[{current_time}] 舌诊结论: {diagnosis}")
 
     def handle_new_crop_image(self, crop_path):
@@ -1018,23 +1015,10 @@ class MainUI(QMainWindow):
         
         # 只在综合诊断标签页显示基本结论
         current_time = datetime.now().strftime('%H:%M:%S')
-        self.diagnosis_text.append(f"[{current_time}] 面诊完成")
         self.diagnosis_text.append(f"[{current_time}] 面诊结论: {face_diagnosis}")
 
 
-def find_max_number_in_folders(folder_path):
-    max_number = 0  # 初始化最大数字为 0
-    for item in os.listdir(folder_path):
-        item_path = os.path.join(folder_path, item)
-        if os.path.isdir(item_path):
-            try:
-                number = int(item)
-                if number > max_number:
-                    max_number = number
-            except ValueError:
-                pass  # 文件夹名称不是数字，忽略
-    print(max_number)
-    return max_number
+
 
 # 主程序入口
 if __name__ == "__main__":

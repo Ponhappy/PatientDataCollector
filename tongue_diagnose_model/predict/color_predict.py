@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
+from . import cancer_predict  
 
 # ------------------ 全局配置 ------------------
 ##舌头颜色
@@ -63,5 +64,15 @@ def predict_type_color(image_path, conf_threshold=CANCER_CONF_THRESHOLD):
 
 # ------------------ 综合流程 ------------------
 def detect_and_predict_color(image_path):
-    predicted_category= predict_type_color(image_path)
+    """
+    综合流程：
+      1. 首先检测图片中是否存在舌头区域
+      2. 如果检测到，再将图片输入训练好的舌头颜色模型进行预测
+    """
+    if cancer_predict.detect_tongue(image_path):
+        predicted_category= predict_type_color(image_path)
+        return predicted_category
+    else:
+        print("由于未检测到舌头，跳过舌苔类型预测。")
+    return 0
    
