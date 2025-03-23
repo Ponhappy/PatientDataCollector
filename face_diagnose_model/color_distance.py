@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 from PIL import ImageFont
 
-from core.const_var import *
 import numpy as np
 import cv2
 # from utils.SkinUtils import *
@@ -14,10 +13,10 @@ def cs(titile="0x123", img=None):
     cv2.destroyWindow(titile)
 
 
-chi_sample = cv2.imread("four_color_face_sample/chi/ting_trim.jpg")
-black_sample = cv2.imread("four_color_face_sample/black/ting_trim.jpg")
-white_sample = cv2.imread("four_color_face_sample/white/ting_trim.jpg")
-yellow_sample = cv2.imread("four_color_face_sample/yellow/ting_trim.jpg")
+chi_sample = cv2.imread("face_diagnose_model/four_color_face_sample/chi/ting_trim.jpg")
+black_sample = cv2.imread("face_diagnose_model/four_color_face_sample/black/ting_trim.jpg")
+white_sample = cv2.imread("face_diagnose_model/four_color_face_sample/white/ting_trim.jpg")
+yellow_sample = cv2.imread("face_diagnose_model/four_color_face_sample/yellow/ting_trim.jpg")
 
 
 # img_predict_roi_ting = cv2.resize(img_predict_roi_ting, img_sample_roi_ting.shape[::-1][1:3])
@@ -219,7 +218,7 @@ def description(str,color):
     return(des)
 
 
-def skin_color_detection(input_path, face_label):
+def skin_color_detection(input_path, face_label,color_analysis_dir):
     dt_chi = distance(input_path, chi_sample)
     dt_black = distance(input_path, black_sample)
     dt_white = distance(input_path, white_sample)
@@ -275,9 +274,15 @@ def skin_color_detection(input_path, face_label):
     if index == 1: color = "黑"
     if index == 2: color = "白"
     if index == 3: color = "黄"
-    des = description(face_label,color)
+    # 防止des未定义的情况
+    try:
+        des = description(face_label, color)
+        print(des)
+    except Exception as e:
+        print(f"错误: {e}")
+        des = "未能获取描述"
+    
     print(index)
-    print(des)
 
     plt.bar(x1, y1, label='Euclidean Distance', width=barwidth)
     plt.bar(x2, y2, label='Lab distance', width=barwidth)
@@ -286,9 +291,12 @@ def skin_color_detection(input_path, face_label):
     plt.bar(x5, y5, label='YCrCb', width=barwidth)
     plt.legend()
     plt.title(face_label)
-    plt.show()
-    output_path = 'results'
+    # plt.show() # 移除这行，防止启动新的事件循环
+    
+    # 保存图片前确保目录存在
+    output_path = color_analysis_dir
     plt.savefig(output_path + '/' + face_label + '.png')
+    plt.close() # 添加这行关闭图形
 
     return(color)
     # 散点图：

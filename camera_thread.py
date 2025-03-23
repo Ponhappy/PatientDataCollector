@@ -30,10 +30,10 @@ class CameraThread(QThread):
     MODE_PREVIEW = 0  # 仅预览模式，不保存图像
     MODE_CAPTURE = 1  # 拍摄模式，定期保存图像并分析
 
-    def __init__(self, save_folder,camera_index=0, crop_tongue_interval=5):
+    def __init__(self, save_dir,camera_index=0, crop_tongue_interval=5):
         super().__init__()
         self.crop_tongue_interval = crop_tongue_interval
-        self.save_folder = save_folder
+        self.save_dir = save_dir
         self.running = True
         self.camera_index = camera_index
         self.cap = None  # 延迟初始化摄像头
@@ -76,6 +76,13 @@ class CameraThread(QThread):
 
         # 添加标志以跟踪是否已发送第一帧图像
         self.first_image_sent = False
+
+        # 面诊相关
+        self.face_detection_enabled = False
+        self.face_diagnosed = False
+        self.face_max_images = 10
+        self.face_image_count = 0
+        self.face_crop_interval = 15  # 每15帧保存一次
 
     def start_camera(self):
         """延迟初始化摄像头"""
@@ -134,6 +141,27 @@ class CameraThread(QThread):
                 # 拍摄模式：发送原始帧
                 self.frame_received.emit(frame)
                 
+
+            # 在处理舌诊之后添加面诊处理代码
+            if self.face_detection_enabled and not self.face_diagnosed:
+                # 保存第一帧以进行面诊
+                if self.face_image_count == 0:
+                    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                    face_image_path = os.path.join(self.save_dir, "face_images", f"face_{timestamp}.jpg")
+                    cv2.imwrite(face_image_path, frame)
+                    self.original_frame_saved_path.emit(face_image_path, "")  # 发送面诊图像路径
+                    self.face_image_count += 1
+                
+                # 继续保存其他9张图像作为备用
+                elif self.frame_count % self.face_crop_interval == 0 and self.face_image_count < self.face_max_images:
+                    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                    face_image_path = os.path.join(self.save_dir, "face_images", f"face_{timestamp}.jpg")
+                    cv2.imwrite(face_image_path, frame)
+                    self.face_image_count += 1
+                    
+                    # 当达到最大图像数量时发出信号
+                    if self.face_image_count >= self.face_max_images:
+                        self.max_images_reached.emit()
 
             time.sleep(0.01)
         
@@ -216,10 +244,10 @@ class CameraThread(QThread):
 
     def save_crop_tongue(self, crop_image):
         """保存裁剪的舌头图像并返回路径"""
-        user_folder = os.path.join(self.save_folder, "tongue_crops")
-        os.makedirs(user_folder, exist_ok=True)
+        user_dir = os.path.join(self.save_dir, "tongue_crops")
+        os.makedirs(user_dir, exist_ok=True)
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        crop_path = os.path.join(user_folder, f"crop_{timestamp}.jpg")
+        crop_path = os.path.join(user_dir, f"crop_{timestamp}.jpg")
         # 判断图像类型并保存
         if isinstance(crop_image, np.ndarray):  # OpenCV格式
             cv2.imwrite(crop_path, crop_image)
@@ -310,3 +338,11 @@ class CameraThread(QThread):
         print(f"原始帧保存到: {original_path}")
         
         return original_path
+
+    def set_face_detection_enabled(self, enabled):
+        """启用或禁用面诊检测"""
+        self.face_detection_enabled = enabled
+        if enabled:
+            self.face_diagnosed = False
+            self.face_image_count = 0
+            print("面诊检测已启用")

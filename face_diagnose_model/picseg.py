@@ -163,7 +163,7 @@ def putTextCN(clone, coord, name_CN):
     return img
 
 
-def pic_seg(image_path):
+def pic_seg(image_path,user_face_dir):
     frame = cv2.imread(image_path)
     frame_1 = frame
     if frame is None:
@@ -174,7 +174,7 @@ def pic_seg(image_path):
     detector = dlib.get_frontal_face_detector()
 
     # 4. 加载预测关键点模型(68个点)
-    predictor = dlib.shape_predictor("model/face_landmark/shape_predictor_68_face_landmarks.dat")
+    predictor = dlib.shape_predictor("face_diagnose_model/model/face_landmark/shape_predictor_68_face_landmarks.dat")
 
     # Resize frame of image to 1/4 size for faster face recognition processing
     small_frame = cv2.resize(frame, (0, 0), fx=1 / scale, fy=1 / scale)
@@ -205,7 +205,7 @@ def pic_seg(image_path):
             frame_1 = putTextCN(frame_1, center_point, name_CN)
 
             # 保存各个区域的图片
-            save_dir = "faceseg/roi_images"
+            save_dir = os.path.join(user_face_dir,"roi_images")
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
             save_path = os.path.join(save_dir, f"{nameKey}_roi.jpg")
@@ -216,7 +216,7 @@ def pic_seg(image_path):
                 print(f"{nameKey} 区域图片为空，未保存。")
 
     # 保存带有标注框和文字标注的原图
-    output_path = "faceseg/annotated_image.jpg"
+    output_path = os.path.join(user_face_dir,"annotated_image.jpg")
     cv2.imwrite(output_path, frame_1)
     print(f"已保存带有标注的原图到 {output_path}")
 

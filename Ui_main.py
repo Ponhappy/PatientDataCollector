@@ -22,6 +22,7 @@ from camera_thread import CameraThread
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QImage
 from tongue_diagnose_model.tongue_diagnose import tongue_diagnose_sum
+from face_diagnose_model.face_diagnose import face_diagnose_sum
 # import resources_rc  # 资源文件
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
@@ -611,9 +612,9 @@ class MainUI(QMainWindow):
         if selected_user == "无用户，请添加":
             QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
             return
-        user_folder = os.path.join(self.patient_list_dp, selected_user)
-        if not os.path.exists(user_folder):
-            os.makedirs(user_folder)
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
         self.patient_id = selected_user  # 使用用户名作为 patient_id
 
         # 1. 指夹传感器
@@ -623,7 +624,7 @@ class MainUI(QMainWindow):
                     serial_port=self.finger_serial_port,
                     baudrate=115200,
                 )
-                self.finger_thread.csv_filename = os.path.join(user_folder, "finger_pulse.csv")
+                self.finger_thread.csv_filename = os.path.join(user_dir, "finger_pulse.csv")
                 self.finger_thread.data_received.connect(self.show_sensors_report)
                 self.finger_thread.start()
                 print("指夹数据采集线程已启动。")
@@ -639,7 +640,7 @@ class MainUI(QMainWindow):
                     serial_port=self.wrist_serial_port,
                     baudrate=38400,
                 )
-                self.wrist_thread.csv_filename = os.path.join(user_folder, "wrist_pulse.csv")
+                self.wrist_thread.csv_filename = os.path.join(user_dir, "wrist_pulse.csv")
                 self.wrist_thread.data_received.connect(self.show_sensors_report)
                 self.wrist_thread.start()
                 print("腕带数据采集线程已启动。")
@@ -696,15 +697,15 @@ class MainUI(QMainWindow):
         if selected_user == "无用户，请添加":
             QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
             return
-        user_folder = os.path.join(self.patient_list_dp, selected_user)
-        if not os.path.exists(user_folder):
-            os.makedirs(user_folder)
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
         self.patient_id = selected_user  # 使用用户名作为 patient_id
 
         # 启动摄像头线程
         if self.camera_thread is None:
             self.camera_thread = CameraThread(
-                save_folder=user_folder,
+                save_dir=user_dir,
                 crop_tongue_interval=5,
                 camera_index=self.camera_index
             )
@@ -715,6 +716,7 @@ class MainUI(QMainWindow):
             self.camera_thread.crop_tongue_saved_path.connect(self.handle_new_crop_image)
             self.camera_thread.original_frame_saved_path.connect(self.handle_original_frame)
             self.camera_thread.max_images_reached.connect(self.handle_max_images_reached)
+            self.camera_thread.original_frame_saved_path.connect(self.handle_face_image)
             
             # 配置摄像头线程 
             self.camera_thread.set_frames_to_skip(15)
@@ -974,8 +976,29 @@ class MainUI(QMainWindow):
         self.diagnosis_in_progress = True
         self.pause_camera_btn.setEnabled(True)
         
-        # 这里需要添加面诊模型的启动代码
-        # self.camera_thread.set_face_detection_enabled(True)
+        # 启用面诊检测
+        if self.camera_thread:
+            self.camera_thread.set_face_detection_enabled(True)
+            self.camera_thread.set_diagnosis_completed(False)  # 重置诊断完成标志
+        
+        # 创建用户面诊文件夹
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
+            return
+        
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        face_dir = os.path.join(user_dir, "face_images")
+        if not os.path.exists(face_dir):
+            os.makedirs(face_dir)
+        
+        # 确保faceseg目录存在
+        faceseg_dir = os.path.join(user_dir, "faceseg")
+        if not os.path.exists(faceseg_dir):
+            os.makedirs(faceseg_dir)
+        faceseg_roi_dir = os.path.join(faceseg_dir, "roi_images")
+        if not os.path.exists(faceseg_roi_dir):
+            os.makedirs(faceseg_roi_dir)
         
         self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始面诊分析...")
         self.status_bar.showMessage("请面向摄像头，系统正在进行面诊分析...")
@@ -1004,19 +1027,49 @@ class MainUI(QMainWindow):
         # 添加基本信息到面象标签页
         self.face_results.append("正在进行面诊分析...")
         
-        # 调用面诊分析函数 (需要替换为实际的面诊函数)
-        # face_diagnosis, face_treatment = face_diagnose_model(image_path)
-        face_diagnosis = "示例面诊结果"  # 临时示例
-        face_treatment = "示例治疗建议"  # 临时示例
+        # 调用面诊分析函数
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
+            return
+        
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        diagnosis_report,  annotated_img_path = face_diagnose_sum(image_path,user_dir)
         
         # 显示诊断结果到面象标签页
-        self.face_results.append(f"面色分析: {face_diagnosis}")
-        self.face_results.append(f"建议治疗: {face_treatment}")
+        self.face_results.append(diagnosis_report)
         
-        # 只在综合诊断标签页显示基本结论
+        # 显示标注图像
+        if annotated_img_path and os.path.exists(annotated_img_path):
+            pixmap = QPixmap(annotated_img_path)
+            self.face_image.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+        
+        # 在综合诊断标签页显示基本结论
         current_time = datetime.now().strftime('%H:%M:%S')
-        self.diagnosis_text.append(f"[{current_time}] 面诊结论: {face_diagnosis}")
+        self.diagnosis_text.append(f"[{current_time}] 面诊结论: {diagnosis_report.splitlines()[0]}")
 
+    def handle_face_image(self, image_path):
+        """处理面诊图像"""
+        # 如果已经进行过诊断或诊断未开始，则忽略
+        if self.face_diagnosed or not self.diagnosis_in_progress:
+            return
+        
+        if not os.path.exists(image_path):
+            print(f"面诊图像不存在: {image_path}")
+            return
+        
+        # 执行面诊分析
+        self.perform_face_diagnosis(image_path)
+        
+        # 标记已完成诊断
+        self.face_diagnosed = True
+        self.diagnosis_in_progress = False
+        
+        # 通知摄像头线程诊断已完成
+        if self.camera_thread:
+            self.camera_thread.face_diagnosed = True
+        
+        self.status_bar.showMessage("面诊分析已完成")
 
 
 
