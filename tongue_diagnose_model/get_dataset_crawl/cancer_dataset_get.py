@@ -27,7 +27,7 @@ CATEGORY_MAP = {
 
 
 
-BASE_DIR = "../dataset/cancer_dataset"
+BASE_DIR = "../dataset/cancerdataset"
 SPLIT_RATIOS = (0.7, 0.15, 0.15)  # train, val, test
 PAGES_PER_CATEGORY = 10
 IMAGES_PER_PAGE = 35

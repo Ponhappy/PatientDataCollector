@@ -1,0 +1,11 @@
+# 舌下络脉.yaml
+path: F:/图像处理/dataset/vein_dataset/images
+train: F:/图像处理/dataset/vein_dataset/images/train
+val: F:/图像处理/dataset/vein_dataset/images/val
+test: F:/图像处理/dataset/vein_dataset/images/test
+
+names:
+  0: 正常舌脉
+  1: 舌脉粗长如网
+  2: 舌脉曲张
+  3: 舌脉瘀血

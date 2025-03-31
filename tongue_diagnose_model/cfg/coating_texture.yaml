@@ -1,0 +1,31 @@
+path: F:/图像处理/dataset/coating_texture_dataset/images  # 数据集根目录
+train: F:/图像处理/dataset/coating_texture_dataset/images/train  # 训练集图片
+val: F:/图像处理/dataset/coating_texture_dataset/images/val  # 验证集图片
+test: F:/图像处理/dataset/coating_texture_dataset/images/test  # 测试集图片（可选）
+
+# 类别
+names:
+  0: 薄苔
+  1: 厚苔
+  2: 润苔
+  3: 滑苔
+  4: 燥苔
+  5: 糙苔
+  6: 腻苔
+  7: 垢腻苔
+  8: 黏腻苔
+  9: 滑腻苔
+  10: 燥腻苔
+  11: 腐苔
+  12: 脓腐苔
+  13: 白霉苔
+  14: 剥苔
+  15: 淡剥苔
+  16: 红剥苔
+  17: 花剥苔
+  18: 类剥苔
+  19: 地图舌
+  20: 镜面舌
+  21: 镜面红舌
+  22: 镜面淡舌
+

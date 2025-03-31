@@ -401,8 +401,8 @@ class MainUI(QMainWindow):
         
         # 模型选择
         model_input = QComboBox()
-        model_input.addItems(["deepseek-chat", "deepseek-reasoner"])
-        model_input.setCurrentText(self.chat_config.get("model", "deepseek-chat"))
+        model_input.addItems(["deepseek-reasoner", "deepseek-chat"])  # 默认ds_r1
+        model_input.setCurrentText(self.chat_config.get("model", "deepseek-reasoner"))
         layout.addRow("模型:", model_input)
         
         # 按钮
@@ -488,16 +488,29 @@ class MainUI(QMainWindow):
     
     def display_chat_response(self, response):
         """显示AI回复"""
-        # 移除"思考中"文本
         current_html = self.chat_history.toHtml()
         current_html = current_html.replace('<p><b>AI助手:</b> <i>思考中...</i></p>', '')
-        self.chat_history.setHtml(current_html)
         
-        # 显示实际回复
-        self.chat_history.append(f'<p><b>AI助手:</b> {response}</p>')
+        # 解析不同模型的响应
+        if "|||" in response:  # ds_r1格式
+            think, answer = response.split("|||", 1)
+            formatted = f'''
+            <p style="color: #666; font-size: 0.9em; margin-bottom: 5px;">{think}</p>
+            <div style="background: #f5f5f5; padding: 10px; border-radius: 5px;">
+                <b>AI助手:</b> 
+                <div style="font-family: 'Consolas', monospace; white-space: pre-wrap;">{answer}</div>
+            </div>
+            '''
+        else:  # ds_v3格式
+            formatted = f'''
+            <div style="background: #f5f5f5; padding: 10px; border-radius: 5px;">
+                <b>AI助手:</b> 
+                <div style="font-family: 'Consolas', monospace; white-space: pre-wrap;">{response}</div>
+            </div>
+            '''
+        
+        self.chat_history.append(formatted)
         self.chat_send_btn.setEnabled(True)
-        
-        # 滚动到底部
         self.chat_history.verticalScrollBar().setValue(
             self.chat_history.verticalScrollBar().maximum()
         )
@@ -769,7 +782,7 @@ class MainUI(QMainWindow):
                     serial_port=self.finger_serial_port,
                     baudrate=115200,
                 )
-                self.finger_thread.csv_filename = os.path.join(user_dir, "finger_pulse.csv")
+                self.finger_thread.dir = user_dir
                 self.finger_thread.data_received.connect(self.show_sensors_report)
                 self.finger_thread.start()
                 print("指夹数据采集线程已启动。")

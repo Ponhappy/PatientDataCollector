@@ -1,0 +1,31 @@
+# 苔色.yaml
+path: F:/图像处理/dataset/coating_color_dataset/images
+train: F:/图像处理/dataset/coating_color_dataset/images/train
+val: F:/图像处理/dataset/coating_color_dataset/images/val
+test: F:/图像处理/dataset/coating_color_dataset/images/test
+
+names:
+  0: 白苔
+  1: 薄白润苔
+  2: 薄白干苔
+  3: 薄白滑苔
+  4: 白厚苔
+  5: 白厚腻苔
+  6: 白厚腻干苔
+  7: 积粉苔
+  8: 白燥苔
+  9: 黄苔
+  10: 薄黄苔
+  11: 深黄苔
+  12: 焦黄苔
+  13: 黄糙苔
+  14: 黄滑苔
+  15: 黄腻苔
+  16: 黄黏腻苔
+  17: 灰黑苔
+  18: 灰黑腻润苔
+  19: 灰黑干燥苔
+  20: 相兼苔色
+  21: 黄白相兼苔
+  22: 黑（灰）白相兼苔
+  23: 黄腻黑（灰）相兼苔

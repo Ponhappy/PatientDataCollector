@@ -26,22 +26,27 @@ class CloudChat():
                 return json.load(f)
         return []
 
-    def get_answer(self,question):
-        self.messages.append({"role": "user", "content": question})  # 记录用户问题
+    def get_answer(self, question):
+        self.messages.append({"role": "user", "content": question})
         client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         response = client.chat.completions.create(
             model=self.model,
             messages=self.messages,
             stream=False
         )
-        think=response.choices[0].message.reasoning_content
-        answer=response.choices[0].message.content
-        # message = response.choices[0].message
-        # print(f"message:",message)
         
-        self.messages.append({"role": "assistant", "content": answer})  # 记录模型回复
-        self.save_history()
-        return think,answer
+        # 根据模型类型处理返回结果
+        if self.model == "deepseek-chat":
+            answer = response.choices[0].message.content
+            self.messages.append({"role": "assistant", "content": answer})
+            self.save_history()
+            return answer  # 只返回答案
+        else:
+            think = getattr(response.choices[0].message, 'reasoning_content', '')
+            answer = response.choices[0].message.content
+            self.messages.append({"role": "assistant", "content": f"{think}\n{answer}"})
+            self.save_history()
+            return f"{think}|||{answer}"  # 用特殊分隔符分割
 
 
 if __name__ == "__main__":
@@ -63,8 +68,7 @@ if __name__ == "__main__":
         if question.lower() in ["exit", "quit"]:
             print("对话结束")
             break
-        think, answer = chat_model.get_answer(question)
-        print("深度思考：",think)
+        answer = chat_model.get_answer(question)
         print("回答：",answer)
 
     history_messages=[]

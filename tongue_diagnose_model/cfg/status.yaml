@@ -1,0 +1,9 @@
+# 舌神.yaml
+path: F:/图像处理/dataset/status_dataset/images
+train: F:/图像处理/dataset/status_dataset/images/train
+val: F:/图像处理/dataset/status_dataset/images/val
+test: F:/图像处理/dataset/status_dataset/images/test
+
+names:
+  0: 荣舌
+  1: 枯舌

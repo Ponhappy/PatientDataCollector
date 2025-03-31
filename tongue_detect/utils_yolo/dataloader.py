@@ -363,7 +363,7 @@ class YoloDataset(Dataset):
         return new_image, new_boxes
 
 # DataLoader中collate_fn使用
-def yolo_dataset_collate(batch):
+def yolodataset_collate(batch):
     images = []
     bboxes = []
     for img, box in batch:

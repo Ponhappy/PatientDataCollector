@@ -1,0 +1,14 @@
+# 舌态.yaml
+path: F:/图像处理/dataset/condition_dataset/images
+train: F:/图像处理/dataset/condition_dataset/images/train
+val: F:/图像处理/dataset/condition_dataset/images/val
+test: F:/图像处理/dataset/condition_dataset/images/test
+
+names:
+  0: 正常舌态
+  1: 舌歪斜
+  2: 舌僵硬
+  3: 舌痿软
+  4: 舌短缩
+  5: 舌吐弄
+  6: 舌震颤

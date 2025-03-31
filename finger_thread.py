@@ -1,279 +1,318 @@
-# finger_thread.py
-
+import serial
+import struct
+import json
+from datetime import datetime
 from PyQt5.QtCore import QThread, pyqtSignal
-import serial
-import csv
-import time
-from datetime import datetime
-from pulse_diagnose_model.finger_detect import save_finger_pulse
-import serial
-import csv
-import time
-from datetime import datetime
+import os
+class DataReceiver:
+    def __init__(self, port, baudrate=38400,duration=30):
+        self.ser = serial.Serial(port, baudrate)
 
+        self.buffer = bytearray()
+        self.packet_data=[]
+        self.parameter_data=[]
+        self.waveform_data=[]
+        self.start_time=datetime.now()
+        self.duration=duration
 
-def finger_detect(port='COM4', baudrate=38400, packet_limit=30):
-    def to_signed_byte(byte):
-        return byte - 256 if byte > 127 else byte
+    def receive_and_parse(self):
+        while True:
+            end_time = datetime.now()
+            elapsed_time = (end_time - self.start_time).total_seconds()
+            if elapsed_time>=self.duration:
+                print(f'指定检测时间{self.duration}秒已到，结束检测')
+                break
+            if self.ser.in_waiting:
+                self.buffer.extend(self.ser.read(self.ser.in_waiting))
+                index = 0
+                # 为了保证至少有index+7个字节在buffer中
+                while index + 7 <= len(self.buffer):
+                    if self.buffer[index] == 0xaa and self.buffer[index + 1] == 0x55:
+                        # print("检测到数据开头head")
+                        length = self.buffer[index + 3]# 长度之后，类型+数据+校验和的总长
+                        total_length = length + 4  # 加上帧头、令牌、长度的长度
+                        
+                        if index + total_length <= len(self.buffer):
+                            # print("至少有一条完整数据")
+                            packet = self.buffer[index:index + total_length]
+                            # print(f'该条完整数据为：{packet}')
+                            token = packet[2]
+                            type_byte = packet[4]
+                            content = packet[5:-1]
 
-    # 打开串口连接
-    ser = serial.Serial('COM4', baudrate=38400, timeout=1, bytesize=8, stopbits=1, parity='N')
+                            # 存储正确数据包
+                            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+                            self.save_data(timestamp,'packet',packet.hex())
 
-    # 确保串口打开
-    if not ser.is_open:
-        ser.open()
+                            if type_byte == 0x01 and token == 0xff:  # 查询产品ID应答
+                                self.handle_product_id(content)
+                            elif type_byte == 0x01 and token == 0x51:  # 查询版本信息应答
+                                self.handle_version_info(content)
+                            elif type_byte == 0x02 and token == 0x51:  # 查询工作状态应答
+                                self.handle_working_status(content)
+                            elif type_byte == 0x01 and token == 0x53:  # 主动上传参数数据包
+                                self.handle_parameter_data(content,timestamp)
+                            elif type_byte in [0x01, 0x02] and token == 0x52:  # 主动上传波形数据包
+                                self.handle_waveform_data(type_byte, content,timestamp)
+                            index += total_length
+                        else:
+                            break
+                    else:
+                        index += 1
+                # 移除已经处理过的数据
+                del self.buffer[:index]
+    
+    # 保存数据
+    def save_data(self, timestamp, data_type, data):
+        record = {
+            'timestamp': timestamp,
+            'data_type': data_type,
+            'data': data
+        }
+        if data_type=='packet':
+            self.packet_data.append(record)
+        elif data_type=='parameter':
+            self.parameter_data.append(record)
+        elif data_type=='waveform':
+            self.waveform_data.append(record)
+    
+    def get_report(self):
+        para_len=len(self.parameter_data)
+        report=''
+        spo2_re=''
+        pr_re=''
+        pi_re=''
+        
+        ave_SpO2=0
+        ave_PR=0
+        ave_PI=0
+        cnt=0
 
-    # 向串口发送启动命令 (0x8A)
-    ser.write(bytes([0x8A]))  # 发送单个字节 0x8A 启动设备
-    time.sleep(0.5)  # 等待设备响应的时间
+        for i in range(para_len):
+            if self.parameter_data[i]['data']['spo2']!=0:
+                ave_SpO2+=self.parameter_data[i]['data']['spo2']
+                ave_PR+=self.parameter_data[i]['data']['pr']
+                ave_PI+=self.parameter_data[i]['data']['pi']
+                cnt+=1
+        if cnt==0:#避免出现除数为0
+            cnt+=1
+        ave_SpO2/=cnt
+        ave_PR/=cnt
+        ave_PI/=cnt
+        # SPO2
+        if ave_SpO2>100:
+            spo2_re=(
+                f'平均血氧饱和度已高达{ave_SpO2:.2f}%，一般无特殊临床表现，因为人体血氧饱和度在正常生理状态下很难超过 100%。'
+                '如果测量值显示过高，可能是测量仪器出现故障或测量方法不正确。'
+                '但如果排除测量问题，真正出现血氧过高，可能提示吸氧浓度过高或氧疗不当，'
+                '长期可能会导致氧中毒，对肺部和其他器官造成损伤。'
+            )
+        elif ave_SpO2<90:
+            spo2_re=(
+                f'平均血氧饱和度已下降到{ave_SpO2:.2f}%，'
+                '呼吸频率加快，呼吸深度加深，可能伴有喘息、胸闷等症状。患者会感到头晕、乏力、心慌，严重时可能出现意识模糊、昏迷等。'
+                '长期或严重的低血氧饱和度会导致组织和器官缺氧，引起多器官功能损害，如心脏、大脑、肝脏、肾脏等功能障碍。'
+                '可能引发心力衰竭、呼吸衰竭、脑损伤等严重疾病，甚至危及生命。'
+            )
+        else:
+            spo2_re=(
+                f'平均血氧饱和度为{ave_SpO2:.2f}%，身体各组织和器官能够获得充足的氧气供应，维持正常的生理功能。'
+                '身体处于良好的氧合状态，能够保证细胞的正常代谢和功能，'
+                '有助于维持身体的健康和正常活动，降低因缺氧导致的各种疾病风险。'
+            )
+        # PR
+        if ave_PR>100:
+            pr_re=(
+                f'平均脉率已高达{ave_PR:.2f}，会感觉心慌、心跳剧烈，可能伴有呼吸急促、头晕等症状。'
+                '在运动或情绪激动后，脉率升高是正常的生理反应，但如果在静息状态下持续心动过速，可能会出现乏力、疲劳等不适。'
+                '严重时，可能会出现心绞痛、心力衰竭等症状。'
+                '长期的心动过速会增加心脏的负担，导致心肌肥厚，甚至发展为心肌病。'
+                '同时，也会增加心律失常、中风和心脏骤停等心血管疾病的发生风险，对身体健康造成严重威胁。'
+            )
+        elif ave_PR<60:
+            pr_re=(
+                f'平均脉率已下降到{ave_PR:.2f}，可能会出现头晕、乏力、眼前发黑等症状，严重时可能导致晕厥。'
+                '在运动或体力活动时，会感到气短、心慌，身体耐力下降。'
+                '如果是由于心脏传导系统疾病等原因引起的心动过缓，还可能伴有胸闷、胸痛等症状。'
+                '脉率过低会导致心脏输出量减少，影响全身的血液供应，尤其是大脑、心脏等重要器官。'
+                '长期心动过缓可能引发心力衰竭、脑供血不足等并发症，增加心血管疾病的风险，影响生活质量和身体健康。'
+            )
+        else:
+            pr_re=(
+                f'平均脉率为{ave_PR:.2f}，心脏有规律地收缩和舒张，脉搏跳动有力且节律整齐。'
+                '身体能够保持正常的血液循环，为各组织器官提供充足的血液灌注。'
+                '在日常活动中，身体能够适应不同的运动强度和生理需求，不会出现心慌、胸闷等不适症状。'
+                '正常的脉率表明心脏功能和血液循环系统处于良好状态，能够维持身体的正常代谢和功能活动，有助于预防心血管疾病等健康问题。'
+            )
+        # PI
+        if ave_PI/10>20:
+            pi_re=(
+                f'平均灌注指数已高达{ave_PI/10:.2f}%，可能表示外周血管扩张，血流速度加快。'
+                '皮肤可能会出现潮红、发热的现象，尤其是在测量部位附近。'
+                '一般情况下，单纯的 PI 过高可能不会有明显的不适症状，'
+                '但如果是由于某些疾病引起的，如甲状腺功能亢进、严重感染等，可能会伴有相应疾病的其他症状，如多汗、心慌、发热等。'
+                '同时，也可能提示身体存在某些疾病状态，需要进一步检查和治疗，以避免病情恶化。'
+            )
+        elif ave_PI/10<1:
+            pi_re=(
+                f'平均灌注指数已下降到{ave_PI/10:.2f}%，可能提示外周血管收缩或血容量不足，皮肤可能会出现发凉、苍白等表现，尤其是肢体末端。'
+                '灌注指数过低会导致局部组织血液灌注不足，引起组织缺氧和代谢紊乱。'
+                '长期可能导致组织坏死、溃疡等并发症，还可能影响伤口愈合，增加感染的风险。'
+                '如果是全身性的灌注不足，会影响多个器官的功能，严重时可导致休克。'
+            )
+        else:
+            pi_re=(
+                f'平均灌注指为{ave_PI/10:.2f}%，表示外周血管血流灌注良好。'
+                '手指、脚趾等部位的皮肤温暖、红润，毛细血管充盈时间正常。'
+                '身体各组织能够得到充足的血液供应，以维持正常的代谢和功能。'
+            )
+        report=f'{spo2_re}\n{pr_re}\n{pi_re}'
+        
+        # print(f"诊断如下：\n{report}")
+        return report
+        
+    # 保存到json文件
+    def save_to_json(self, packet_fp='packet.json',parameter_fp='parameter.json',waveform_fp='waveform.json'):
+        with open(packet_fp, 'w') as f:
+            json.dump(self.packet_data, f, indent=4)
+            print(f'原数据包已保存至{packet_fp}')
+        with open(parameter_fp, 'w') as f:
+            json.dump(self.parameter_data, f, indent=4)
+            print(f'参数数据已保存至{parameter_fp}')
+        with open(waveform_fp, 'w') as f:
+            json.dump(self.waveform_data, f, indent=4)
+            print(f'波幅数据已保存至{waveform_fp}')
 
-    # 存储接收到的原始数据
-    received_data = []
-    timestamps = []  # 存储时间戳
+    def handle_product_id(self, content):
+        print('*********************查询产品ID***********************')
+        product_id = content.decode('ascii')
+        print(f"产品ID: {product_id}")
 
-    # 读取数据并保存为 CSV 文件
-    try:
-        packet_count = 0
-        while packet_count < 30:  # 采集80个回合
-            if ser.in_waiting >= 88:  # 检查串口是否有足够的数据
-                # 读取一包数据
-                raw_data = ser.read(88)  # 读取88个字节
-                hex_data = raw_data.hex().upper()  # 将原始数据转换为十六进制字符串
+    def handle_version_info(self, content):
+        print('*********************查询产品版本***********************')
+        software_version = content[0]
+        hardware_version = content[1]
+        print(f"软件版本: Ver{software_version >> 4}.{software_version & 0xf}")
+        print(f"硬件版本: Ver{hardware_version >> 4}.{hardware_version & 0xf}")
 
-                # 在每个字节之间添加空格
-                formatted_data = ' '.join([hex_data[i:i + 2] for i in range(0, len(hex_data), 2)])
+    def handle_working_status(self, content):
+        print('*********************查询工作状态***********************')
+        status_byte = content[0]
+        mode = (status_byte >> 6) & 0x3
+        mode_mapping = {0: "成人模式", 1: "新生儿模式", 2: "动物模式", 3: "预留"}
+        sending_status = (status_byte >> 5) & 0x1
+        probe_status = (status_byte >> 4) & 0x1
+        probe_off = (status_byte >> 3) & 0x1
+        check_probe = (status_byte >> 2) & 0x1
+        print(f"工作模式: {mode_mapping[mode]}")
+        print(f"上行主动发送状态: {'允许' if sending_status else '禁止'}")
+        print(f"探头连接状态: {'未连接' if probe_status else '已连接'}")
+        print(f"探头脱落状态: {'是' if probe_off else '否'}")
+        print(f"检查探头状态: {'是' if check_probe else '否'}")
 
-                # 时间戳
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    def handle_parameter_data(self, content,timestamp):
+        print('*********************查询参数数据***********************')
+        spo2 = content[0]
+        pr_low = content[1]
+        pr_high = content[2]
+        pi = content[3]
+        status_byte = content[4]
+        pr = (pr_high << 8) + pr_low
+        probe_disconnected = (status_byte >> 0) & 0x1
+        probe_off = (status_byte >> 1) & 0x1
+        pulse_searching = (status_byte >> 2) & 0x1
+        check_probe = (status_byte >> 3) & 0x1
+        motion_detected = (status_byte >> 4) & 0x1
+        low_perfusion = (status_byte >> 5) & 0x1
+        mode = (status_byte >> 6) & 0x3
+        mode_mapping = {0: "成人模式", 1: "新生儿模式", 2: "动物模式", 3: "预留"}
+        print(f"血氧饱和度(SpO2): {spo2}%")
+        print(f"脉率(PR): {pr} bpm")
+        print(f"灌注指数(PI): {pi / 1000}")
+        print(f"探头断开状态: {'是' if probe_disconnected else '否'}")
+        print(f"探头脱落状态: {'是' if probe_off else '否'}")
+        print(f"脉搏搜索状态: {'是' if pulse_searching else '否'}")
+        print(f"检查探头状态: {'是' if check_probe else '否'}")
+        print(f"运动检测状态: {'是' if motion_detected else '否'}")
+        print(f"低灌注状态: {'是' if low_perfusion else '否'}")
+        print(f"工作模式: {mode_mapping[mode]}")
+        parameter_data = {
+            'spo2': spo2,
+            'pr': pr,
+            'pi': pi,
+            'status_byte': status_byte
+        }
+        self.save_data(timestamp, 'parameter', parameter_data)
 
-                # 保存数据（时间戳，格式化后的原始数据）
-                received_data.append([timestamp, formatted_data])
-                timestamps.append(timestamp)
+    def handle_waveform_data(self, type_byte, content,timestamp):
+        print('*********************查询波形数据***********************')
+        waveform_data = []
+        if type_byte == 0x01:
+            for i in range(0, len(content), 1):
+                pulse_flag = (content[i] >> 7) & 0x1
+                waveform_value = content[i] & 0x7f
+                waveform_data.append((pulse_flag, waveform_value))
+            print(f"归一化波形数据: {waveform_data}")
+        
+        elif type_byte == 0x02:
+            ir_data = []
+            red_data = []
+            for i in range(0, len(content), 8):
+                ir_sample = struct.unpack('<I', content[i:i + 4])[0]
+                red_sample = struct.unpack('<I', content[i + 4:i + 8])[0]
+                ir_data.append(ir_sample)
+                red_data.append(red_sample)
+            print(f"未归一化红外波形数据: {ir_data}")
+            print(f"未归一化红光波形数据: {red_data}")
+            waveform_data={'ir_data': ir_data, 'red_data': red_data}
+        self.save_data(timestamp, 'waveform', waveform_data)
 
-                # 实时输出数据
-                print(f"Packet {packet_count + 1}: {formatted_data}")
-
-                packet_count += 1
-
-            # 为了避免高CPU占用，可以适当休息一下
-            time.sleep(0.1)
-
-    finally:
-        # 关闭串口连接
-        ser.close()
-        print("Serial connection closed.")
-
-    # 将数据保存为 CSV 文件
-    csv_filename = "pulse_data.csv"
-    with open(csv_filename, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Timestamp", "Raw Data"])  # 写入表头
-        for data in received_data:
-            writer.writerow(data)  # 写入每一行数据
-
-    print(f"Pulse data saved to {csv_filename}")
-
-    # 解码数据
-    decoded_data = []
-
-    with open(csv_filename, mode='r') as file:
-        reader = csv.reader(file)
-        next(reader)  # 跳过表头
-        for row in reader:
-            timestamp = row[0]  # 时间戳
-            raw_data = row[1]  # 原始数据（十六进制字符串，每个字节用空格分隔）
-
-            # 将十六进制字符串转换为字节列表
-            byte_list = [int(x, 16) for x in raw_data.split()]
-
-            # 解码数据
-            decoded_packet = {
-                "timestamp": timestamp,  # 时间戳
-                "acdata": [to_signed_byte(byte) for byte in byte_list[1:65]],  # 心律波形数据
-                "heart_rate": byte_list[65],  # 心率
-                "spo2": byte_list[66],  # 血氧
-                "bk": byte_list[67],  # 微循环
-                "fatigue_index": byte_list[68],  # 疲劳指数
-                "reserved_1": byte_list[69],  # 保留数据
-                "systolic_pressure": byte_list[70],  # 收缩压
-                "diastolic_pressure": byte_list[71],  # 舒张压
-                "cardiac_output": byte_list[72],  # 心输出
-                "peripheral_resistance": byte_list[73],  # 外周阻力
-                "rr_interval": byte_list[74],  # RR间期
-                "sdnn": byte_list[75],  # SDNN
-                "rmssd": byte_list[76],  # RMSSD
-                "nn50": byte_list[77],  # NN50
-                "pnn50": byte_list[78],  # pNN50
-                "rra": byte_list[79:85],  # RR间期相关数据
-                "reserved_2": byte_list[85:87],  # 保留数据
-            }
-
-            # 保存解码后的数据
-            decoded_data.append(decoded_packet)
-
-    # 将解码后的数据保存到 CSV 文件
-    output_csv_filename = "decoded_pulse_data.csv"
-    with open(output_csv_filename, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        # 写入表头
-        writer.writerow([
-            "Timestamp",
-            "AC Data",  # 心律波形数据
-            "Heart Rate",  # 心率
-            "SpO2",  # 血氧
-            "BK",  # 微循环
-            "Fatigue Index",  # 疲劳指数
-            "Reserved 1",  # 保留数据
-            "Systolic Pressure",  # 收缩压
-            "Diastolic Pressure",  # 舒张压
-            "Cardiac Output",  # 心输出
-            "Peripheral Resistance",  # 外周阻力
-            "RR Interval",  # RR间期
-            "SDNN",  # SDNN
-            "RMSSD",  # RMSSD
-            "NN50",  # NN50
-            "pNN50",  # pNN50
-            "RRA",  # RR间期相关数据
-            "Reserved 2",  # 保留数据
-        ])
-        # 写入数据
-        for packet in decoded_data:
-            writer.writerow([
-                packet["timestamp"],
-                " ".join(map(str, packet["acdata"])),  # 心律波形数据
-                packet["heart_rate"],  # 心率
-                packet["spo2"],  # 血氧
-                packet["bk"],  # 微循环
-                packet["fatigue_index"],  # 疲劳指数
-                packet["reserved_1"],  # 保留数据
-                packet["systolic_pressure"],  # 收缩压
-                packet["diastolic_pressure"],  # 舒张压
-                packet["cardiac_output"],  # 心输出
-                packet["peripheral_resistance"],  # 外周阻力
-                packet["rr_interval"],  # RR间期
-                packet["sdnn"],  # SDNN
-                packet["rmssd"],  # RMSSD
-                packet["nn50"],  # NN50
-                packet["pnn50"],  # pNN50
-                " ".join(map(str, packet["rra"])),  # RR间期相关数据
-                " ".join(map(str, packet["reserved_2"])),  # 保留数据
-            ])
-
-    print(f"Decoded data saved to {output_csv_filename}")
-
-    # 读取解码后的数据
-    decoded_csv_filename = "decoded_pulse_data.csv"
-    decoded_data = []
-
-    with open(decoded_csv_filename, mode='r') as file:
-        reader = csv.reader(file)
-        header = next(reader)  # 读取表头
-        for row in reader:
-            # 解析每一行数据
-            decoded_packet = {
-                "timestamp": row[0],  # 时间戳
-                "acdata": list(map(int, row[1].split())),  # 心律波形数据
-                "heart_rate": int(row[2]),  # 心率
-                "spo2": int(row[3]),  # 血氧
-                "bk": int(row[4]),  # 微循环
-                "fatigue_index": int(row[5]),  # 疲劳指数
-                "reserved_1": int(row[6]),  # 保留数据
-                "systolic_pressure": int(row[7]),  # 收缩压
-                "diastolic_pressure": int(row[8]),  # 舒张压
-                "cardiac_output": int(row[9]),  # 心输出
-                "peripheral_resistance": int(row[10]),  # 外周阻力
-                "rr_interval": int(row[11]),  # RR间期
-                "sdnn": int(row[12]),  # SDNN
-                "rmssd": int(row[13]),  # RMSSD
-                "nn50": int(row[14]),  # NN50
-                "pnn50": int(row[15]),  # pNN50
-                "rra": list(map(int, row[16].split())),  # RR间期相关数据
-                "reserved_2": list(map(int, row[17].split())),  # 保留数据
-            }
-            decoded_data.append(decoded_packet)
-
-    # 剔除所有关键指标为0的错误数据包
-    valid_data = [
-        packet for packet in decoded_data
-        if (packet["heart_rate"] != 0 and
-            packet["spo2"] != 0 and
-            packet["bk"] != 0)
-        # packet["diastolic_pressure"] != 0 and
-        # packet["cardiac_output"] != 0)
-    ]
-
-    # 计算有效数据的平均值
-    def calculate_average(values):
-        return sum(values) / len(values) if values else 0
-
-    avg_heart_rate = calculate_average([packet["heart_rate"] for packet in valid_data])
-    avg_spo2 = calculate_average([packet["spo2"] for packet in valid_data])
-    avg_bk = calculate_average([packet["bk"] for packet in valid_data])
-    avg_fatigue = calculate_average([packet["fatigue_index"] for packet in valid_data])
-    avg_systolic_pressure = calculate_average([packet["systolic_pressure"] for packet in valid_data])
-    avg_diastolic_pressure = calculate_average([packet["diastolic_pressure"] for packet in valid_data])
-    avg_hrv = calculate_average([packet["rr_interval"] for packet in valid_data])  # 假设rr_interval为心率变异性
-
-    # 生成诊断报告
-    diagnosis_report = []
-
-    # 心率诊断
-    if avg_heart_rate < 60:
-        diagnosis_report.append(
-            "心率：心动过缓（平均心率：{:.2f} bpm）。可能存在头晕、乏力、倦怠、精神差的症状。".format(avg_heart_rate))
-    elif avg_heart_rate > 100:
-        diagnosis_report.append(
-            "心率：心动过速（平均心率：{:.2f} bpm）。可能出现心慌、气短、乏力等症状。".format(avg_heart_rate))
-    else:
-        diagnosis_report.append("心率：正常（平均心率：{:.2f} bpm）。".format(avg_heart_rate))
-
-    # 血氧饱和度诊断
-    if avg_spo2 < 95:
-        diagnosis_report.append(
-            "血氧饱和度：较低（平均血氧：{:.2f}%）。可能出现呼吸不畅、四肢乏力、头晕及胸闷等症状。".format(avg_spo2))
-    else:
-        diagnosis_report.append("血氧饱和度：正常（平均血氧：{:.2f}%）。".format(avg_spo2))
-
-    # 微循环诊断
-    if avg_bk < 70:
-        diagnosis_report.append(
-            "微循环：血管指数过低（平均微循环：{:.2f}）。处于亚健康状态，容易出现疲乏无力、情绪低落、睡眠质量差等症状。".format(
-                avg_bk))
-    elif 70 <= avg_bk < 79:
-        diagnosis_report.append(
-            "微循环：血管指数较低（平均微循环：{:.2f}）。处于亚健康状态，容易出现疲乏无力、情绪低落、睡眠质量差等症状。".format(
-                avg_bk))
-    else:
-        diagnosis_report.append("微循环：正常（平均微循环：{:.2f}）。".format(avg_bk))
-
-    # 疲劳指数诊断
-    if avg_fatigue > 25:
-        diagnosis_report.append("疲劳状态：正常（平均疲劳状态：{:.2f}）。".format(avg_fatigue))
-    elif 15 < avg_fatigue <= 25:
-        diagnosis_report.append(
-            "疲劳状态：较高（平均疲劳状态：{:.2f}）。轻度疲劳，表现为神疲乏力、注意力不集中、专注力差或者精神焦虑、紧张等。".format(
-                avg_fatigue))
-    else:
-        diagnosis_report.append(
-            "疲劳状态：过高（平均疲劳状态：{:.2f}）。过度疲劳，表现为周身乏力、记忆力减退、情绪波动较大以及睡眠质量较差等。".format(
-                avg_fatigue))
-
-    return "\n".join(diagnosis_report)
 
 
 class FingerDataThread(QThread):
-    data_received = pyqtSignal(str)  # 定义信号，发送诊断报告
+    data_received = pyqtSignal(str)  # 发送 HRV 诊断报告
 
-    def __init__(self, serial_port='COM4', baudrate=38400, parent=None):
+    def __init__(self, serial_port="COM9", baudrate=38400, parent=None):
         super().__init__(parent)
-        self.serial_port = serial_port
+        
+        # 确保 serial_port 是字符串类型
+        if isinstance(serial_port, int):
+            self.serial_port = str(serial_port)  # 将传入的整数端口转换为字符串
+        else:
+            self.serial_port = serial_port
+        self.receiver = DataReceiver(port=self.serial_port,duration=30)
         self.baudrate = baudrate
         self.running = True
+        self.dir=''
 
     def run(self):
-        report = finger_detect(self.serial_port, self.baudrate, packet_limit=30)  # 调用封装好的函数
+        self.receiver.receive_and_parse()
+        packet_fp=os.path.join(self.dir,'packet.json')
+        parameter_fp=os.path.join(self.dir,'parameter.json')
+        waveform_fp=os.path.join(self.dir,'waveform.json')
+        self.receiver.save_to_json(packet_fp,parameter_fp,waveform_fp)
+        report=self.receiver.get_report()
         self.data_received.emit(report)  # 发送诊断报告
         print(report)
+
     def stop(self):
         self.running = False
         self.wait()
+
+
+
+if __name__ == "__main__":
+    port = 'COM9'  # 替换为实际的串口端口
+    receiver = DataReceiver(port)
+
+    # 接受设备传送到服务的回答
+    try:
+        receiver.receive_and_parse()
+    except KeyboardInterrupt:
+        # 可以指定位置，不然就直接默认文件位置了
+        receiver.save_to_json()
+    finally:
+        receiver.save_to_json()
+        report=receiver.get_report()
+        print(report)
+    

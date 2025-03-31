@@ -1,0 +1,23 @@
+# 舌形质.yaml
+path: F:/图像处理/dataset/shape_dataset/images
+train: F:/图像处理/dataset/shape_dataset/images/train
+val: F:/图像处理/dataset/shape_dataset/images/val
+test: F:/图像处理/dataset/shape_dataset/images/test
+
+names:
+  0: 老舌
+  1: 淡嫩舌
+  2: 红嫩舌
+  3: 胖大舌
+  4: 淡胖舌
+  5: 肿胀舌
+  6: 齿痕舌
+  7: 红瘦舌
+  8: 淡瘦舌
+  9: 红点舌
+  10: 芒刺舌
+  11: 裂纹舌
+  12: 淡裂舌
+  13: 红裂舌
+  14: 舌衄
+  15: 舌疮
