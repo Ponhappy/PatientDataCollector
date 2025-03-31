@@ -34,10 +34,14 @@ class CloudChat():
             messages=self.messages,
             stream=False
         )
+        think=response.choices[0].message.reasoning_content
         answer=response.choices[0].message.content
+        # message = response.choices[0].message
+        # print(f"message:",message)
+        
         self.messages.append({"role": "assistant", "content": answer})  # 记录模型回复
         self.save_history()
-        return answer
+        return think,answer
 
 
 if __name__ == "__main__":
@@ -48,7 +52,8 @@ if __name__ == "__main__":
     prompt="你是一个中医大神"
     ds_v3='deepseek-chat'
     ds_r1='deepseek-reasoner'
-    model=ds_v3#因为v3便宜些
+    # model=ds_v3#因为v3便宜些
+    model =ds_r1
     history_file="history.json"
 
     chat_model = CloudChat(api_key,base_url,prompt,model,history_file)
@@ -58,8 +63,9 @@ if __name__ == "__main__":
         if question.lower() in ["exit", "quit"]:
             print("对话结束")
             break
-        answer = chat_model.get_answer(question)
-        print("ds回答：",answer)
+        think, answer = chat_model.get_answer(question)
+        print("深度思考：",think)
+        print("回答：",answer)
 
     history_messages=[]
     with open(history_file,'r',encoding='utf-8')as f:

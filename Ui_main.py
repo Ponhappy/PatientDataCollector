@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QLabel, QTextBrowser, QInputDialog, QMessageBox, QDialog, QLineEdit,
     QFormLayout, QDialogButtonBox, QVBoxLayout, QHBoxLayout, QWidget,
     QStatusBar, QToolButton, QGroupBox, QTabWidget, QScrollArea, QGridLayout,
-    QStyleFactory
+    QStyleFactory, QSplitter, QTextEdit, QRadioButton
 )
 import sys
 from PyQt5.QtWidgets import QWidget
@@ -16,13 +16,15 @@ import serial
 import serial.tools.list_ports
 import json
 from datetime import datetime
-from wrist_thread import WristDataThread
 from finger_thread import FingerDataThread
 from camera_thread import CameraThread
+from chat_thread import ChatThread
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap, QImage
 from tongue_diagnose_model.tongue_diagnose import tongue_diagnose_sum
 from face_diagnose_model.face_diagnose import face_diagnose_sum
+from chat_model.cloud_chat import CloudChat
+from chat_model.local_chat import LocalChat
 # import resources_rc  # 资源文件
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
@@ -90,9 +92,9 @@ class MainUI(QMainWindow):
         self.main_layout.setContentsMargins(10, 10, 10, 10)
         self.main_layout.setSpacing(10)
         
-        # 创建左侧控制面板和右侧显示区域
+        # 创建左侧控制面板和中间显示区域以及右侧诊断报告区域
         self.setup_control_panel()
-        self.setup_display_area()
+        self.setup_main_area()
         
         # 创建底部状态栏
         self.status_bar = QStatusBar()
@@ -104,12 +106,10 @@ class MainUI(QMainWindow):
         
         # 初始化变量
         self.camera_thread = None
-        self.wrist_thread = None
         self.finger_thread = None
         self.camera_index = 0
         # 初始化串口属性
         self.finger_serial_port = None
-        self.wrist_serial_port = None
         
         # 填充选项框
         self.populate_cameras()
@@ -157,25 +157,15 @@ class MainUI(QMainWindow):
         device_layout.addWidget(self.camera_combo, 0, 1)
         device_layout.addWidget(self.confirm_camera_btn, 0, 2)
         
-        # 腕带串口
-        self.wrist_serial_label = QtWidgets.QLabel("选择腕带串口:")
-        self.wrist_serial_combo = QtWidgets.QComboBox()
-        self.wrist_serial_combo.setObjectName("deviceCombo")
-        self.confirm_wrist_btn = QtWidgets.QPushButton("确认")
-        self.confirm_wrist_btn.clicked.connect(self.confirm_wrist_selection)
-        device_layout.addWidget(self.wrist_serial_label, 1, 0)
-        device_layout.addWidget(self.wrist_serial_combo, 1, 1)
-        device_layout.addWidget(self.confirm_wrist_btn, 1, 2)
-        
-        # 指夹串口
+        # 移除腕带串口，保留指夹串口
         self.finger_serial_label = QtWidgets.QLabel("选择指夹串口:")
         self.finger_serial_combo = QtWidgets.QComboBox()
         self.finger_serial_combo.setObjectName("deviceCombo")
         self.confirm_finger_btn = QtWidgets.QPushButton("确认")
         self.confirm_finger_btn.clicked.connect(self.confirm_finger_selection)
-        device_layout.addWidget(self.finger_serial_label, 2, 0)
-        device_layout.addWidget(self.finger_serial_combo, 2, 1)
-        device_layout.addWidget(self.confirm_finger_btn, 2, 2)
+        device_layout.addWidget(self.finger_serial_label, 1, 0)
+        device_layout.addWidget(self.finger_serial_combo, 1, 1)
+        device_layout.addWidget(self.confirm_finger_btn, 1, 2)
         
         # 创建操作控制组
         operation_group = self.create_group_box("操作控制")
@@ -191,7 +181,6 @@ class MainUI(QMainWindow):
         self.stop_sensors_btn = self.create_action_button("停止脉象采集", ":/icons/stop.png")
         self.stop_sensors_btn.clicked.connect(self.stop_sensors)
         
-
         self.refresh_devices_btn = self.create_action_button("刷新设备列表", ":/icons/refresh.png")
         self.refresh_devices_btn.clicked.connect(self.refresh_devices)
         
@@ -216,10 +205,15 @@ class MainUI(QMainWindow):
         self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
         self.pause_camera_btn.setEnabled(False)  # 初始状态禁用
         
+        # 添加导出报告按钮
+        self.export_report_btn = QPushButton("导出诊断报告")
+        self.export_report_btn.clicked.connect(self.export_html_report)
+        
         # 添加按钮到布局
         self.diagnosis_layout.addWidget(self.tongue_diagnosis_btn)
         self.diagnosis_layout.addWidget(self.face_diagnosis_btn)
         self.diagnosis_layout.addWidget(self.pause_camera_btn)
+        self.diagnosis_layout.addWidget(self.export_report_btn)
         
         self.diagnosis_group.setLayout(self.diagnosis_layout)
         operation_layout.addWidget(self.diagnosis_group)
@@ -233,27 +227,28 @@ class MainUI(QMainWindow):
         # 将控制面板添加到主布局
         self.main_layout.addWidget(self.control_panel)
 
-    def setup_display_area(self):
-        """设置右侧显示区域"""
-        # 创建右侧显示区域容器
+    def setup_main_area(self):
+        """设置中央和右侧显示区域"""
+        # 创建一个水平分割器，用于中央显示区和右侧诊断报告区
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        
+        # 创建中央显示区域
         self.display_area = QWidget()
         self.display_area.setObjectName("displayArea")
-        
-        # 显示区域布局
-        display_layout = QtWidgets.QVBoxLayout(self.display_area)
+        display_layout = QVBoxLayout(self.display_area)
         display_layout.setContentsMargins(0, 0, 0, 0)
         display_layout.setSpacing(10)
         
-        # 创建上部相机视图和下部分析结果区域的分割器
-        self.main_splitter = QtWidgets.QSplitter(Qt.Vertical)
+        # 创建垂直分割器，用于上部相机视图和下部聊天窗口
+        self.display_splitter = QSplitter(Qt.Vertical)
         
         # 创建相机视图区域
         camera_view_container = QWidget()
-        camera_view_layout = QtWidgets.QHBoxLayout(camera_view_container)
+        camera_view_layout = QVBoxLayout(camera_view_container)
         camera_view_layout.setContentsMargins(0, 0, 0, 0)
         
         # 创建画面显示区域
-        self.video_display = QtWidgets.QLabel("等待摄像头启动...")
+        self.video_display = QLabel("等待摄像头启动...")
         self.video_display.setObjectName("videoDisplay")
         self.video_display.setAlignment(Qt.AlignCenter)
         self.video_display.setMinimumSize(640, 480)
@@ -261,81 +256,251 @@ class MainUI(QMainWindow):
         
         camera_view_layout.addWidget(self.video_display)
         
-        # 创建分析结果区域
-        self.analysis_container = QtWidgets.QTabWidget()
-        self.analysis_container.setObjectName("analysisTab")
+        # 创建聊天窗口区域
+        chat_container = QWidget()
+        chat_layout = QVBoxLayout(chat_container)
+        chat_layout.setContentsMargins(5, 5, 5, 5)
         
-        # 舌象分析标签页
-        tongue_tab = QtWidgets.QWidget()
-        tongue_layout = QtWidgets.QHBoxLayout(tongue_tab)
+        # 添加模型选择按钮组
+        model_selection_widget = QWidget()
+        model_selection_layout = QHBoxLayout(model_selection_widget)
+        model_selection_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 左侧舌象图像显示
-        self.tongue_image = QtWidgets.QLabel("舌象图像将在此显示")
-        self.tongue_image.setObjectName("analysisImage")
-        self.tongue_image.setAlignment(Qt.AlignCenter)
-        self.tongue_image.setStyleSheet("background-color: #34495e; color: white;")
+        self.cloud_model_radio = QRadioButton("云端模型")
+        self.local_model_radio = QRadioButton("本地模型")
+        self.cloud_model_radio.setChecked(True)  # 默认选择云端模型
         
-        # 右侧舌象分析结果
-        self.tongue_results = QtWidgets.QTextBrowser()
-        self.tongue_results.setObjectName("analysisText")
+        # 添加API设置按钮
+        self.api_settings_btn = QPushButton("API设置")
+        self.api_settings_btn.clicked.connect(self.show_api_settings)
         
-        tongue_layout.addWidget(self.tongue_image, 1)
-        tongue_layout.addWidget(self.tongue_results, 1)
+        model_selection_layout.addWidget(self.cloud_model_radio)
+        model_selection_layout.addWidget(self.local_model_radio)
+        model_selection_layout.addWidget(self.api_settings_btn)
+        model_selection_layout.addStretch()
         
-        # 面象分析标签页
-        face_tab = QtWidgets.QWidget()
-        face_layout = QtWidgets.QHBoxLayout(face_tab)
+        # 聊天历史显示
+        self.chat_history = QTextBrowser()
+        self.chat_history.setObjectName("chatHistory")
+        self.chat_history.setMinimumHeight(150)
         
-        # 左侧面像图像显示
-        self.face_image = QtWidgets.QLabel("面像图像将在此显示")
-        self.face_image.setObjectName("analysisImage")
-        self.face_image.setAlignment(Qt.AlignCenter)
-        self.face_image.setStyleSheet("background-color: #34495e; color: white;")
+        # 聊天输入区域
+        chat_input_container = QWidget()
+        chat_input_layout = QHBoxLayout(chat_input_container)
+        chat_input_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 右侧面象分析结果
-        self.face_results = QtWidgets.QTextBrowser()
-        self.face_results.setObjectName("analysisText")
+        self.chat_input = QTextEdit()
+        self.chat_input.setObjectName("chatInput")
+        self.chat_input.setMaximumHeight(80)
+        self.chat_input.setPlaceholderText("在此输入问题...")
         
-        face_layout.addWidget(self.face_image, 1)
-        face_layout.addWidget(self.face_results, 1)
+        self.chat_send_btn = QPushButton("发送")
+        self.chat_send_btn.setObjectName("chatSendBtn")
+        self.chat_send_btn.clicked.connect(self.send_chat_message)
         
-        # 脉象分析标签页
-        sensor_tab = QtWidgets.QWidget()
-        sensor_layout = QtWidgets.QVBoxLayout(sensor_tab)
+        chat_input_layout.addWidget(self.chat_input, 4)
+        chat_input_layout.addWidget(self.chat_send_btn, 1)
         
-        # 脉象分析显示区域
-        self.sensor_data = QtWidgets.QTextBrowser()
-        self.sensor_data.setObjectName("sensorData")
+        # 添加到聊天布局
+        chat_layout.addWidget(model_selection_widget)
+        chat_layout.addWidget(self.chat_history, 3)
+        chat_layout.addWidget(chat_input_container, 1)
         
-        sensor_layout.addWidget(self.sensor_data)
+        # 添加到显示分割器
+        self.display_splitter.addWidget(camera_view_container)
+        self.display_splitter.addWidget(chat_container)
+        self.display_splitter.setStretchFactor(0, 3)
+        self.display_splitter.setStretchFactor(1, 1)
         
-        # 诊断结果标签页
-        diagnosis_tab = QtWidgets.QWidget()
-        diagnosis_layout = QtWidgets.QVBoxLayout(diagnosis_tab)
+        # 添加到显示区域布局
+        display_layout.addWidget(self.display_splitter)
         
-        # 综合诊断结果显示
-        self.diagnosis_text = QtWidgets.QTextBrowser()
-        self.diagnosis_text.setObjectName("diagnosisText")
+        # 创建右侧诊断报告区域
+        self.diagnosis_report_area = QWidget()
+        self.diagnosis_report_area.setObjectName("diagnosisReportArea")
+        self.diagnosis_report_area.setMinimumWidth(400)
         
-        diagnosis_layout.addWidget(self.diagnosis_text)
+        diagnosis_report_layout = QVBoxLayout(self.diagnosis_report_area)
+        diagnosis_report_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 添加标签页
-        self.analysis_container.addTab(tongue_tab, "舌象分析")
-        self.analysis_container.addTab(face_tab, "面象分析")
-        self.analysis_container.addTab(sensor_tab, "脉象分析")
-        self.analysis_container.addTab(diagnosis_tab, "综合诊断")
+        # 诊断报告标题
+        report_title = QLabel("诊断报告")
+        report_title.setObjectName("reportTitle")
+        report_title.setAlignment(Qt.AlignCenter)
         
-        # 将相机视图和分析结果添加到分割器
-        self.main_splitter.addWidget(camera_view_container)
-        self.main_splitter.addWidget(self.analysis_container)
-        self.main_splitter.setStretchFactor(0, 1)
-        self.main_splitter.setStretchFactor(1, 2)
+        # 诊断报告内容 - 使用QTextBrowser以支持HTML内容和滚动
+        self.diagnosis_report = QTextBrowser()
+        self.diagnosis_report.setObjectName("diagnosisReport")
+        self.diagnosis_report.setOpenExternalLinks(True)  # 允许打开外部链接
         
-        # 添加分割器到显示区域
-        display_layout.addWidget(self.main_splitter)
+        diagnosis_report_layout.addWidget(report_title)
+        diagnosis_report_layout.addWidget(self.diagnosis_report)
         
-        # 将显示区域添加到主布局
-        self.main_layout.addWidget(self.display_area, 1)  # 1表示拉伸因子，使显示区域占据更多空间
+        # 添加到主分割器
+        self.main_splitter.addWidget(self.display_area)
+        self.main_splitter.addWidget(self.diagnosis_report_area)
+        self.main_splitter.setStretchFactor(0, 2)
+        self.main_splitter.setStretchFactor(1, 1)
+        
+        # 将主分割器添加到主布局
+        self.main_layout.addWidget(self.main_splitter)
+
+        # 初始化聊天模型
+        self.init_chat_models()
+
+    def init_chat_models(self):
+        """初始化聊天模型"""
+        # 读取配置或使用默认值
+        config_path = os.path.join(os.path.expanduser("~"), ".tcm_config.json")
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            else:
+                config = {
+                    "api_key": "sk-d69f89a753d74b399a9404194d611aaa",  # 默认API密钥
+                    "base_url": "https://api.deepseek.com",            # 默认API基址
+                    "prompt": "你是一个中医专家，熟悉舌诊和脉诊等中医诊断方法。请基于医学知识，对患者的问题给出专业的意见。",
+                    "model": "deepseek-chat"
+                }
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"加载配置文件出错: {e}")
+            config = {
+                "api_key": "sk-d69f89a753d74b399a9404194d611aaa",
+                "base_url": "https://api.deepseek.com",
+                "prompt": "你是一个中医专家，熟悉舌诊和脉诊等中医诊断方法。请基于医学知识，对患者的问题给出专业的意见。",
+                "model": "deepseek-chat"
+            }
+        
+        self.chat_config = config
+        self.cloud_chat = None  # 延迟初始化，等到实际需要时创建
+        self.local_chat = None
+        self.current_chat_history_file = None
+
+    def show_api_settings(self):
+        """显示API设置对话框"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("API设置")
+        layout = QFormLayout(dialog)
+        
+        # API密钥输入
+        api_key_input = QLineEdit(self.chat_config.get("api_key", ""))
+        layout.addRow("API密钥:", api_key_input)
+        
+        # 基础URL输入
+        base_url_input = QLineEdit(self.chat_config.get("base_url", "https://api.deepseek.com"))
+        layout.addRow("基础URL:", base_url_input)
+        
+        # 模型提示词
+        prompt_input = QTextEdit()
+        prompt_input.setText(self.chat_config.get("prompt", "你是一个中医专家"))
+        prompt_input.setMaximumHeight(100)
+        layout.addRow("系统提示词:", prompt_input)
+        
+        # 模型选择
+        model_input = QComboBox()
+        model_input.addItems(["deepseek-chat", "deepseek-reasoner"])
+        model_input.setCurrentText(self.chat_config.get("model", "deepseek-chat"))
+        layout.addRow("模型:", model_input)
+        
+        # 按钮
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            # 保存设置
+            self.chat_config["api_key"] = api_key_input.text()
+            self.chat_config["base_url"] = base_url_input.text()
+            self.chat_config["prompt"] = prompt_input.toPlainText()
+            self.chat_config["model"] = model_input.currentText()
+            
+            # 保存到配置文件
+            config_path = os.path.join(os.path.expanduser("~"), ".tcm_config.json")
+            try:
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.chat_config, f, ensure_ascii=False, indent=2)
+                
+                # 重置模型实例，使其使用新设置
+                self.cloud_chat = None
+                QMessageBox.information(self, "设置保存", "API设置已保存成功!")
+            except Exception as e:
+                QMessageBox.critical(self, "保存失败", f"保存设置时出错:\n{str(e)}")
+    
+    def get_or_create_chat_model(self):
+        """获取或创建当前选择的聊天模型实例"""
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            QMessageBox.warning(self, '无用户', '请先添加用户再开始聊天。')
+            return None
+            
+        # 设置当前用户的历史记录文件
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        os.makedirs(user_dir, exist_ok=True)
+        
+        if self.cloud_model_radio.isChecked():
+            # 使用云端模型
+            history_file = os.path.join(user_dir, "cloud_chat_history.json")
+            if self.cloud_chat is None or self.current_chat_history_file != history_file:
+                self.cloud_chat = CloudChat(
+                    api_key=self.chat_config["api_key"],
+                    base_url=self.chat_config["base_url"],
+                    prompt=self.chat_config["prompt"],
+                    model=self.chat_config["model"],
+                    history_file=history_file
+                )
+                self.current_chat_history_file = history_file
+            return self.cloud_chat
+        else:
+            # 使用本地模型
+            history_file = os.path.join(user_dir, "local_chat_history.json")
+            if self.local_chat is None or self.current_chat_history_file != history_file:
+                self.local_chat = LocalChat()  # 本地模型可能需要其他参数
+                self.current_chat_history_file = history_file
+            return self.local_chat
+    
+    def send_chat_message(self):
+        """发送聊天消息并获取回答"""
+        user_message = self.chat_input.toPlainText().strip()
+        if not user_message:
+            return
+            
+        # 显示用户消息
+        self.chat_history.append(f'<p style="text-align: right;"><b>您:</b> {user_message}</p>')
+        self.chat_input.clear()
+        
+        # 获取当前选择的聊天模型
+        chat_model = self.get_or_create_chat_model()
+        if chat_model is None:
+            return
+            
+        # 设置"等待中"状态
+        self.chat_send_btn.setEnabled(False)
+        self.chat_history.append('<p><b>AI助手:</b> <i>思考中...</i></p>')
+        
+        # 使用线程处理聊天请求以避免UI冻结
+        self.chat_thread = ChatThread(chat_model, user_message)
+        self.chat_thread.response_ready.connect(self.display_chat_response)
+        self.chat_thread.start()
+    
+    def display_chat_response(self, response):
+        """显示AI回复"""
+        # 移除"思考中"文本
+        current_html = self.chat_history.toHtml()
+        current_html = current_html.replace('<p><b>AI助手:</b> <i>思考中...</i></p>', '')
+        self.chat_history.setHtml(current_html)
+        
+        # 显示实际回复
+        self.chat_history.append(f'<p><b>AI助手:</b> {response}</p>')
+        self.chat_send_btn.setEnabled(True)
+        
+        # 滚动到底部
+        self.chat_history.verticalScrollBar().setValue(
+            self.chat_history.verticalScrollBar().maximum()
+        )
 
     def create_group_box(self, title):
         """创建分组框"""
@@ -443,16 +608,7 @@ class MainUI(QMainWindow):
 
     def populate_serial_ports(self):
         ports = serial.tools.list_ports.comports()
-        # Populate wrist serial ports
-        self.wrist_serial_combo.clear()
-        for port in ports:
-            self.wrist_serial_combo.addItem(port.device)
-        if ports:
-            self.wrist_serial_combo.setCurrentIndex(0)
-        else:
-            self.wrist_serial_combo.addItem("没有可用的串口")
-
-        # Populate finger serial ports
+        # 只填充指夹串口
         self.finger_serial_combo.clear()
         for port in ports:
             self.finger_serial_combo.addItem(port.device)
@@ -468,7 +624,6 @@ class MainUI(QMainWindow):
         self.populate_cameras()
         
         # 刷新串口列表
-        self.wrist_serial_combo.clear()
         self.finger_serial_combo.clear()
         self.populate_serial_ports()
         
@@ -556,16 +711,6 @@ class MainUI(QMainWindow):
             self.user_combo.setCurrentText(username)
             print(f"已添加新用户: {username}")
 
-    def confirm_wrist_selection(self):
-        selected_port = self.wrist_serial_combo.currentText()
-        if selected_port == "没有可用的串口" or not selected_port.startswith("COM"):
-            print("没有可用的腕带串口，无法启动传感器。")
-            return
-        print(f"选择的腕带串口: {selected_port}")
-        # 设置腕带串口
-        self.wrist_serial_port = selected_port  # 存储腕带串口
-        print(f"腕带串口已设置为 {self.wrist_serial_port}")
-
     def confirm_finger_selection(self):
         selected_port = self.finger_serial_combo.currentText()
         if selected_port == "没有可用的串口" or not selected_port.startswith("COM"):
@@ -606,7 +751,7 @@ class MainUI(QMainWindow):
         self.confirm_camera_b.setText(_translate("MainWindow", "确认摄像头"))
         self.camera_mode_btn.setText(_translate("MainWindow", "开始拍摄"))
 
-    # 仅启动指夹和腕带传感器
+    # 只启动指夹传感器，移除腕带相关代码
     def start_sensors_only(self):
         selected_user = self.user_combo.currentText()
         if selected_user == "无用户，请添加":
@@ -617,7 +762,7 @@ class MainUI(QMainWindow):
             os.makedirs(user_dir)
         self.patient_id = selected_user  # 使用用户名作为 patient_id
 
-        # 1. 指夹传感器
+        # 指夹传感器
         if self.finger_serial_port and self.finger_serial_port != "没有可用的串口":
             if self.finger_thread is None:
                 self.finger_thread = FingerDataThread(
@@ -633,47 +778,205 @@ class MainUI(QMainWindow):
         else:
             print("指夹串口未选择或初始化失败。")
 
-        # 2. 腕带传感器
-        if self.wrist_serial_port and self.wrist_serial_port != "没有可用的串口":
-            if self.wrist_thread is None:
-                self.wrist_thread = WristDataThread(
-                    serial_port=self.wrist_serial_port,
-                    baudrate=38400,
-                )
-                self.wrist_thread.csv_filename = os.path.join(user_dir, "wrist_pulse.csv")
-                self.wrist_thread.data_received.connect(self.show_sensors_report)
-                self.wrist_thread.start()
-                print("腕带数据采集线程已启动。")
-            else:
-                print("腕带数据采集线程已在运行。")
-        else:
-            print("腕带串口未选择或初始化失败。")
-
-
     def show_sensors_report(self, report):
-        # 将报告内容添加到脉象分析文本浏览器
-        # 不包含时间戳版本
-        # formatted_report = f"{report}"
-        # 包含时间戳版本
+        # 将报告内容直接添加到诊断报告中
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        formatted_report = f"[{timestamp}] {report}"
+        formatted_report = f"<p><b>[{timestamp}]</b> {report}</p>"
         
-        # 在脉象分析标签页中显示
-        self.sensor_data.append(formatted_report)
-        
-        # 同时在诊断结果标签页中也添加摘要信息
-        summary = f"[{timestamp}] 收到新的脉象分析报告"
-        self.diagnosis_text.append(summary)
-        
-        # 切换到脉象分析标签页，确保用户能立即看到结果
-        # 找到包含传感器标签页的 QTabWidget
-        for i in range(self.analysis_container.count()):
-            if self.analysis_container.tabText(i) == "脉象分析":
-                self.analysis_container.setCurrentIndex(i)
-                break
+        # 在诊断报告中添加
+        self.diagnosis_report.append(formatted_report)
         
         # 更新状态栏信息
         self.status_bar.showMessage("智能脉诊已完成")
+
+    def stop_sensors(self):
+        if self.finger_thread is not None:
+            self.finger_thread.stop()
+            self.finger_thread = None
+            print("指夹数据采集线程已停止。")
+
+    def start_tongue_diagnosis(self):
+        """开始舌诊分析流程"""
+        # 确保摄像头是运行状态
+        if self.camera_thread is None or not self.camera_thread.isRunning():
+            self.start_camera_only()  # 启动摄像头
+        
+        # 重置诊断状态
+        self.tongue_diagnosed = False
+        self.diagnosis_in_progress = True
+        self.pause_camera_btn.setEnabled(True)
+        
+        # 确保舌头检测已开启
+        if self.camera_thread:
+            self.camera_thread.set_tongue_detection_enabled(True)
+            self.camera_thread.first_image_sent = False  # 重置图像发送标志
+        
+        self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始舌诊分析...")
+        self.status_bar.showMessage("请伸出舌头，系统正在进行舌诊分析...")
+
+    def start_face_diagnosis(self):
+        """开始面诊分析流程"""
+        # 确保摄像头是运行状态
+        if self.camera_thread is None or not self.camera_thread.isRunning():
+            self.start_camera_only()  # 启动摄像头
+        
+        # 重置面诊状态
+        self.face_diagnosed = False
+        self.diagnosis_in_progress = True
+        self.pause_camera_btn.setEnabled(True)
+        
+        # 启用面诊检测
+        if self.camera_thread:
+            self.camera_thread.set_face_detection_enabled(True)
+            self.camera_thread.set_diagnosis_completed(False)  # 重置诊断完成标志
+        
+        # 创建用户面诊文件夹
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
+            return
+        
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        face_dir = os.path.join(user_dir, "face_images")
+        if not os.path.exists(face_dir):
+            os.makedirs(face_dir)
+        
+        # 确保faceseg目录存在
+        faceseg_dir = os.path.join(user_dir, "faceseg")
+        if not os.path.exists(faceseg_dir):
+            os.makedirs(faceseg_dir)
+        faceseg_roi_dir = os.path.join(faceseg_dir, "roi_images")
+        if not os.path.exists(faceseg_roi_dir):
+            os.makedirs(faceseg_roi_dir)
+        
+        self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始面诊分析...")
+        self.status_bar.showMessage("请面向摄像头，系统正在进行面诊分析...")
+
+    def toggle_camera_pause(self):
+        """暂停/恢复摄像头线程"""
+        if not self.camera_thread:
+            return
+        
+        if self.camera_thread.isRunning():
+            # 暂停摄像头线程
+            self.camera_thread.pause()
+            self.pause_camera_btn.setText("恢复摄像头")
+            self.status_bar.showMessage("摄像头已暂停")
+        else:
+            # 恢复摄像头线程
+            self.camera_thread.resume()
+            self.pause_camera_btn.setText("暂停摄像头")
+            self.status_bar.showMessage("摄像头已恢复")
+
+    def perform_tongue_diagnosis(self, image_path, is_original_frame=True):
+        """执行舌诊分析
+        
+        Args:
+            image_path: 图像文件路径
+            is_original_frame: 是否是原始帧图像(True)还是裁剪图像(False)
+        """
+        # 调用舌头诊断函数
+        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path, is_original_frame)
+        
+        # 创建HTML诊断报告
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        html_report = f"""
+        <h3>舌诊分析报告 - {timestamp}</h3>
+        <div style="display: flex; margin-bottom: 15px;">
+            <img src="file:///{tongue_annotated}" style="max-width: 300px; margin-right: 15px;">
+            <div>
+                <p><b>诊断结论:</b> {diagnosis}</p>
+                <p><b>治疗建议:</b> {treatment}</p>
+            </div>
+        </div>
+        <h4>详细分析</h4>
+        <p><b>舌色分析:</b> {color_report}</p>
+        <p><b>舌苔分析:</b> {coating_report}</p>
+        <p><b>异常检测:</b> {cancer_report}</p>
+        <hr>
+        """
+        
+        # 添加到诊断报告
+        self.diagnosis_report.append(html_report)
+        
+        # 标记已完成诊断
+        self.tongue_diagnosed = True
+        self.diagnosis_in_progress = False
+        
+        # 通知摄像头线程诊断已完成
+        if self.camera_thread:
+            self.camera_thread.set_diagnosis_completed(True)
+        
+        self.status_bar.showMessage("舌诊分析已完成")
+
+    def perform_face_diagnosis(self, image_path):
+        """执行面诊分析"""
+        # 调用面诊分析函数
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
+            return
+        
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        diagnosis_report, annotated_img_path = face_diagnose_sum(image_path, user_dir)
+        
+        # 创建HTML诊断报告
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        html_report = f"""
+        <h3>面诊分析报告 - {timestamp}</h3>
+        <div style="display: flex; margin-bottom: 15px;">
+            <img src="file:///{annotated_img_path}" style="max-width: 300px; margin-right: 15px;">
+            <div>
+                <p>{diagnosis_report}</p>
+            </div>
+        </div>
+        <hr>
+        """
+        
+        # 添加到诊断报告
+        self.diagnosis_report.append(html_report)
+        
+        # 标记已完成诊断
+        self.face_diagnosed = True
+        self.diagnosis_in_progress = False
+        
+        # 通知摄像头线程诊断已完成
+        if self.camera_thread:
+            self.camera_thread.face_diagnosed = True
+        
+        self.status_bar.showMessage("面诊分析已完成")
+
+    def closeEvent(self, event):
+        # 当窗口关闭时，确保所有线程都被正确停止
+        if self.finger_thread is not None:
+            self.finger_thread.stop()
+        if self.camera_thread is not None:
+            self.camera_thread.stop()
+        event.accept()
+
+    # 新增：导出HTML报告
+    def export_html_report(self):
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            QMessageBox.warning(self, '无用户', '请先添加用户。')
+            return
+            
+        # 获取HTML内容
+        html_content = self.diagnosis_report.toHtml()
+        
+        # 选择保存路径
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存诊断报告", 
+            os.path.join(self.patient_list_dp, selected_user, f"{selected_user}_诊断报告.html"),
+            "HTML Files (*.html)")
+            
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as file:
+                    file.write(html_content)
+                QMessageBox.information(self, "导出成功", f"诊断报告已成功导出到:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "导出失败", f"保存报告时出错:\n{str(e)}")
 
     # 仅启动摄像头
     def start_camera_only(self):
@@ -758,78 +1061,6 @@ class MainUI(QMainWindow):
         except Exception as e:
             print(f"显示摄像头帧出错: {e}")
 
-
-
-    def show_diagnosis(self, diag):
-        self.diag = diag
-        self.index = 0
-        self.diagnosis_text.clear()  # 清空文本浏览器
-        self.timer = self.startTimer(100)  # 每 100 毫秒触发一次定时器事件
-
-    def timerEvent(self, event):
-        if self.index < len(self.diag):
-            self.diagnosis_text.insertPlainText(self.diag[self.index])  # 插入一个字符
-            self.index += 1
-        else:
-            self.killTimer(self.timer)  # 文本显示完毕，停止定时器
-
-    def closeEvent(self, event):
-        # 当窗口关闭时，确保所有线程都被正确停止
-        if self.wrist_thread is not None:
-            self.wrist_thread.stop()
-        if self.finger_thread is not None:
-            self.finger_thread.stop()
-        if self.camera_thread is not None:
-            self.camera_thread.stop()
-        event.accept()
-
-    # 对应原本的开始检测的按钮 - 现在作为综合方法，调用上面两个新方法
-    def start_all_sensor(self):
-        # 顺序调用两个新方法，同时启动所有传感器
-        self.start_sensors_only()
-        self.start_camera_only()
-
-    def stop_sensors(self):
-        if self.wrist_thread is not None:
-            self.wrist_thread.stop()
-            self.wrist_thread = None
-            print("腕带数据采集线程已停止。")
-        if self.finger_thread is not None:
-            self.finger_thread.stop()
-            self.finger_thread = None
-            print("指夹数据采集线程已停止。")
-
-    def stop_camera(self):
-        if self.camera_thread is not None:
-            self.camera_thread.stop()
-            self.camera_thread = None
-            print("摄像头线程已停止。")
-
-    def toggle_camera_mode(self):
-        """切换摄像头工作模式"""
-        if self.camera_thread is None:
-            return
-        
-        if self.camera_thread.working_mode == CameraThread.MODE_PREVIEW:
-            # 从预览切换到拍摄模式
-            self.camera_thread.set_mode(CameraThread.MODE_CAPTURE)
-            self.camera_mode_btn.setText("停止拍摄")
-        else:
-            # 从拍摄切换到预览模式
-            self.camera_thread.set_mode(CameraThread.MODE_PREVIEW)
-            self.camera_mode_btn.setText("开始拍摄")
- 
-
-    def toggle_tongue_detection(self, enabled):
-        """处理舌头检测开关状态"""
-        if self.camera_thread:  # 确保摄像头线程已创建
-            self.camera_thread.set_tongue_detection_enabled(enabled)
-            status = "启用" if enabled else "禁用"
-            self.status_bar.showMessage(f"舌头检测已{status}")
-        else:
-            self.status_bar.showMessage("请先启动摄像头再操作")
-
-
     def show_guidance(self, message):
         """显示检测引导提示"""
         print("调用show_guidance函数")
@@ -840,31 +1071,6 @@ class MainUI(QMainWindow):
         self.status_bar.showMessage(status_msg)
             
             
-
-    def perform_tongue_diagnosis(self, image_path,is_original_frame=True):
-        """执行舌诊分析
-        
-        Args:
-            image_path: 图像文件路径
-            is_original_frame: 是否是原始帧图像(True)还是裁剪图像(False)
-        """
-        # 清空之前的舌诊结果
-        self.tongue_results.clear()
-        
-        
-        # 调用舌头诊断函数
-        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path,is_original_frame)
-        
-        # 显示诊断结果到舌象标签页
-        self.tongue_results.append(color_report)
-        self.tongue_results.append(coating_report)
-        self.tongue_results.append(cancer_report)
-        self.tongue_results.append(diagnosis)
-        self.tongue_results.append(treatment)
-        
-        # 只在综合诊断标签页显示基本结论
-        current_time = datetime.now().strftime('%H:%M:%S')
-        self.diagnosis_text.append(f"[{current_time}] 舌诊结论: {diagnosis}")
 
     def handle_new_crop_image(self, crop_path):
         """处理新裁剪的舌头图像"""
@@ -933,120 +1139,19 @@ class MainUI(QMainWindow):
     def display_first_crop(self, path):
         """显示第一张裁剪图像"""
         pixmap = QPixmap(path)
-        self.tongue_image.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+        self.video_display.setPixmap(pixmap.scaled(self.video_display.width(), self.video_display.height(), 
+                                   QtCore.Qt.KeepAspectRatio))
         self.latest_crop_path = path
         
     def handle_max_images_reached(self):
         """处理达到最大图像数量的情况"""
-        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 已达到最大舌象采集数量({self.camera_thread.max_tongue_crops}张)")
+        self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 已达到最大舌象采集数量({self.camera_thread.max_tongue_crops}张)")
         self.status_bar.showMessage("舌象采集已完成")
         
         # 自动暂停摄像头
         if self.camera_thread and self.camera_thread.isRunning():
             self.toggle_camera_pause()
-            self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断完成，摄像头已自动暂停")
-
-    def start_tongue_diagnosis(self):
-        """开始舌诊分析流程"""
-        # 确保摄像头是运行状态
-        if self.camera_thread is None or not self.camera_thread.isRunning():
-            self.start_camera_only()  # 启动摄像头
-        
-        # 重置诊断状态
-        self.tongue_diagnosed = False
-        self.diagnosis_in_progress = True
-        self.pause_camera_btn.setEnabled(True)
-        
-        # 确保舌头检测已开启
-        if self.camera_thread:
-            self.camera_thread.set_tongue_detection_enabled(True)
-            self.camera_thread.first_image_sent = False  # 重置图像发送标志
-        
-        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始舌诊分析...")
-        self.status_bar.showMessage("请伸出舌头，系统正在进行舌诊分析...")
-
-    def start_face_diagnosis(self):
-        """开始面诊分析流程"""
-        # 确保摄像头是运行状态
-        if self.camera_thread is None or not self.camera_thread.isRunning():
-            self.start_camera_only()  # 启动摄像头
-        
-        # 重置面诊状态
-        self.face_diagnosed = False
-        self.diagnosis_in_progress = True
-        self.pause_camera_btn.setEnabled(True)
-        
-        # 启用面诊检测
-        if self.camera_thread:
-            self.camera_thread.set_face_detection_enabled(True)
-            self.camera_thread.set_diagnosis_completed(False)  # 重置诊断完成标志
-        
-        # 创建用户面诊文件夹
-        selected_user = self.user_combo.currentText()
-        if selected_user == "无用户，请添加":
-            QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
-            return
-        
-        user_dir = os.path.join(self.patient_list_dp, selected_user)
-        face_dir = os.path.join(user_dir, "face_images")
-        if not os.path.exists(face_dir):
-            os.makedirs(face_dir)
-        
-        # 确保faceseg目录存在
-        faceseg_dir = os.path.join(user_dir, "faceseg")
-        if not os.path.exists(faceseg_dir):
-            os.makedirs(faceseg_dir)
-        faceseg_roi_dir = os.path.join(faceseg_dir, "roi_images")
-        if not os.path.exists(faceseg_roi_dir):
-            os.makedirs(faceseg_roi_dir)
-        
-        self.diagnosis_text.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始面诊分析...")
-        self.status_bar.showMessage("请面向摄像头，系统正在进行面诊分析...")
-
-    def toggle_camera_pause(self):
-        """暂停/恢复摄像头线程"""
-        if not self.camera_thread:
-            return
-        
-        if self.camera_thread.isRunning():
-            # 暂停摄像头线程
-            self.camera_thread.pause()
-            self.pause_camera_btn.setText("恢复摄像头")
-            self.status_bar.showMessage("摄像头已暂停")
-        else:
-            # 恢复摄像头线程
-            self.camera_thread.resume()
-            self.pause_camera_btn.setText("暂停摄像头")
-            self.status_bar.showMessage("摄像头已恢复")
-
-    def perform_face_diagnosis(self, image_path):
-        """执行面诊分析"""
-        # 清空之前的面诊结果
-        self.face_results.clear()
-        
-        # 添加基本信息到面象标签页
-        self.face_results.append("正在进行面诊分析...")
-        
-        # 调用面诊分析函数
-        selected_user = self.user_combo.currentText()
-        if selected_user == "无用户，请添加":
-            QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
-            return
-        
-        user_dir = os.path.join(self.patient_list_dp, selected_user)
-        diagnosis_report,  annotated_img_path = face_diagnose_sum(image_path,user_dir)
-        
-        # 显示诊断结果到面象标签页
-        self.face_results.append(diagnosis_report)
-        
-        # 显示标注图像
-        if annotated_img_path and os.path.exists(annotated_img_path):
-            pixmap = QPixmap(annotated_img_path)
-            self.face_image.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
-        
-        # 在综合诊断标签页显示基本结论
-        current_time = datetime.now().strftime('%H:%M:%S')
-        self.diagnosis_text.append(f"[{current_time}] 面诊结论: {diagnosis_report.splitlines()[0]}")
+            self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 诊断完成，摄像头已自动暂停")
 
     def handle_face_image(self, image_path):
         """处理面诊图像"""
@@ -1070,7 +1175,6 @@ class MainUI(QMainWindow):
             self.camera_thread.face_diagnosed = True
         
         self.status_bar.showMessage("面诊分析已完成")
-
 
 
 # 主程序入口
