@@ -2,6 +2,7 @@ from openai import OpenAI
 import os 
 import json
 from datetime import datetime
+from markdown import markdown  # 需要安装python-markdown包
 
 '''
 请注意，不要挂梯子，不然会连接失败（好像又可以挂梯子使用了，不太懂，估计跟地区有关）
@@ -198,7 +199,67 @@ class CloudChat():
             full_response = f"{think}|||{answer}"
             self.messages.append({"role": "assistant", "content": full_response})
             self.save_history()
-            return full_response  # 用特殊分隔符分割
+            
+            try:
+                # 转换Markdown为HTML
+                formatted_response = markdown(
+                    full_response,
+                    extensions=['fenced_code', 'tables', 'nl2br']
+                )
+                
+                # 添加CSS样式
+                formatted_response = f"""
+                <html>
+                <head>
+                <style>
+                    body {{ 
+                        font-family: 'Microsoft YaHei', SimSun, sans-serif;
+                        font-size: 14px;
+                        line-height: 1.6;
+                        color: #333;
+                    }}
+                    strong {{ color: #2c3e50; }}
+                    em {{ color: #27ae60; }}
+                    code {{
+                        background: #f8f9fa;
+                        padding: 2px 4px;
+                        border-radius: 3px;
+                        font-family: Consolas, Monaco, monospace;
+                    }}
+                    pre {{
+                        background: #f8f9fa;
+                        padding: 15px;
+                        border-radius: 6px;
+                        overflow-x: auto;
+                    }}
+                    table {{
+                        border-collapse: collapse;
+                        margin: 15px 0;
+                        width: 100%;
+                    }}
+                    th, td {{
+                        border: 1px solid #ddd;
+                        padding: 8px;
+                        text-align: left;
+                    }}
+                    th {{
+                        background-color: #3498db;
+                        color: white;
+                    }}
+                </style>
+                </head>
+                <body>
+                {formatted_response}
+                </body>
+                </html>
+                """
+                
+                self.messages.append({"role": "assistant", "content": formatted_response})
+                return formatted_response
+                
+            except Exception as e:
+                print(f"获取回答错误: {str(e)}")
+                return "生成回答时发生错误"
 
 
 if __name__ == "__main__":

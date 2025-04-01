@@ -850,35 +850,18 @@ class MainUI(QMainWindow):
             print("指夹串口未选择或初始化失败。")
 
     def show_sensors_report(self, report):
-        # 预处理文本
+        # 直接使用原始报告内容，仅转换换行符
         processed_report = report.replace('\n', '<br>')
-        
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         html_report = f"""
         <div class="report-section pulse-section">
-            <h3>脉象分析报告 - {timestamp}</h3>
-            <div class="vital-signs">
-                <div class="parameter-box">
-                    <span class="param-label">血氧饱和度</span>
-                    <span class="param-value">{spo2_value}%</span>
-                    <p class="param-desc">{spo2_analysis}</p>
-                </div>
-                <div class="parameter-box">
-                    <span class="param-label">平均脉率</span>
-                    <span class="param-value">{pulse_rate}bpm</span>
-                    <p class="param-desc">{pulse_analysis}</p>
-                </div>
-                <div class="parameter-box">
-                    <span class="param-label">灌注指数</span>
-                    <span class="param-value">{perfusion_index}%</span>
-                    <p class="param-desc">{perfusion_analysis}</p>
-                </div>
+            <h3>脉象分析报告 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</h3>
+            <div class="vital-signs-text">
+                {processed_report}
             </div>
         </div>
         <hr>
         """
-        
         self.diagnosis_report.append(html_report)
         self.save_diagnosis_to_chat_history("脉诊", report.strip())
         self.status_bar.showMessage("智能脉诊已完成")
@@ -981,7 +964,7 @@ class MainUI(QMainWindow):
         # 获取回答
         try:
             response = chat_model.get_answer("")  # 空问题，直接使用现有消息
-            # ... 后续显示报告代码不变 ...
+            self.show_ai_response(response)
         except Exception as e:
             print(f"综合诊断错误: {str(e)}")
             QtWidgets.QMessageBox.critical(self, '错误', f'综合诊断失败: {str(e)}')
@@ -1030,36 +1013,15 @@ class MainUI(QMainWindow):
         cancer_processed = cancer_report.replace('\n', '<br>')
         
         # 创建HTML诊断报告
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         html_report = f"""
-        <div class="report-section tongue-section">
-            <h3>舌诊分析报告 - {timestamp}</h3>
-            <div class="diagnosis-grid">
-                <div class="image-box">
-                    <img src="{img_src}">
-                    <div class="image-caption">舌象采集图</div>
+        <div class="report-section face-section">
+            <h3>面诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
+            <div class="face-content">
+                <div class="face-image">
+                    <img src="{img_src}" alt="面部分析图">
                 </div>
-                <div class="diagnosis-details">
-                    <div class="diagnosis-block primary">
-                        <h4>核心诊断</h4>
-                        <p><strong>综合辨证：</strong>{diagnosis_processed}</p>
-                        <p><strong>治疗建议：</strong>{treatment_processed}</p>
-                    </div>
-                    <div class="diagnosis-block secondary">
-                        <h4>详细分析</h4>
-                        <div class="analysis-item">
-                            <span class="item-label">舌色分析：</span>
-                            <span class="item-value">{color_processed}</span>
-                        </div>
-                        <div class="analysis-item">
-                            <span class="item-label">舌苔分析：</span>
-                            <span class="item-value">{coating_processed}</span>
-                        </div>
-                        <div class="analysis-item">
-                            <span class="item-label">异常检测：</span>
-                            <span class="item-value">{cancer_processed}</span>
-                        </div>
-                    </div>
+                <div class="diagnosis-text">
+                    {diagnosis_report.replace('\n', '<br>').replace('【', '<strong>【').replace('】', '】</strong>')}
                 </div>
             </div>
         </div>
@@ -1112,27 +1074,17 @@ class MainUI(QMainWindow):
             print(f"图像嵌入错误: {e}")
             img_src = ""
         
-        # 预先处理文本
-        diagnosis_html = diagnosis_report.replace('\n', '<br>')
-        
-        # 创建HTML诊断报告
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # 生成HTML报告（直接使用原始内容）
         html_report = f"""
         <div class="report-section face-section">
-            <h3>面诊分析报告 - {timestamp}</h3>
-            <div class="facial-zones">
-                {''.join([f'''
-                <div class="zone-card {'highlight' if '异常' in diag else ''}">
-                    <div class="zone-header">
-                        <span class="zone-name">{zone}</span>
-                        <span class="zone-status">{status}</span>
-                    </div>
-                    <div class="zone-diagnosis">
-                        <div class="diagnosis-title">脏腑辨证：</div>
-                        <div class="diagnosis-content">{diag}</div>
-                    </div>
+            <h3>面诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
+            <div class="face-content">
+                <div class="face-image">
+                    <img src="{img_src}" alt="面部分析图">
                 </div>
-                ''' for zone, status, diag in parsed_report])}
+                <div class="diagnosis-text">
+                    {diagnosis_report.replace('\n', '<br>').replace('【', '<strong>【').replace('】', '】</strong>')}
+                </div>
             </div>
         </div>
         <hr>
@@ -1193,12 +1145,11 @@ class MainUI(QMainWindow):
                         padding-bottom: 10px;
                     }}
                     .report-section {{
-                        background: #fff;
-                        border: 1px solid #e0e0e0;
-                        border-radius: 8px;
                         margin: 20px 0;
-                        padding: 25px;
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        padding: 20px;
+                        background: #f8f9fa;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                     }}
                     img {{
                         max-width: 80%;
@@ -1212,98 +1163,36 @@ class MainUI(QMainWindow):
                         font-size: 0.9em;
                         margin-bottom: 5px;
                     }}
-                    .vital-signs {{
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-                        gap: 20px;
-                        margin-top: 15px;
-                    }}
-                    .parameter-box {{
-                        background: #f8f9fa;
-                        padding: 20px;
-                        border-radius: 6px;
-                        border-left: 4px solid #3498db;
-                    }}
-                    .param-label {{
-                        display: block;
-                        color: #2c3e50;
-                        font-weight: 600;
-                        margin-bottom: 5px;
-                    }}
-                    .param-value {{
-                        font-size: 1.4em;
-                        color: #3498db;
-                        font-weight: 700;
-                    }}
-                    .diagnosis-grid {{
+                    /* 新增面诊专属样式 */
+                    .face-content {{
                         display: grid;
                         grid-template-columns: 300px 1fr;
                         gap: 25px;
                         margin-top: 20px;
                     }}
-                    .image-box {{
-                        text-align: center;
+                    
+                    .face-image img {{
+                        max-width: 100%;
                         border: 1px solid #ddd;
-                        padding: 10px;
                         border-radius: 6px;
+                        padding: 5px;
                     }}
-                    .image-caption {{
-                        color: #666;
-                        font-size: 0.9em;
-                        margin-top: 10px;
+                    
+                    .diagnosis-text {{
+                        line-height: 1.8;
+                        font-size: 15px;
+                        color: #444;
                     }}
-                    .diagnosis-block {{
-                        margin-bottom: 20px;
-                        padding: 15px;
-                        background: #f8f9fa;
-                        border-radius: 6px;
-                    }}
-                    .diagnosis-block.primary {{
-                        border-left: 4px solid #27ae60;
-                    }}
-                    .diagnosis-block.secondary {{
-                        border-left: 4px solid #f39c12;
-                    }}
-                    .analysis-item {{
-                        margin: 12px 0;
-                        padding: 10px;
-                        background: #fff;
-                        border-radius: 4px;
-                    }}
-                    .item-label {{
-                        font-weight: 600;
+                    
+                    .diagnosis-text strong {{
                         color: #2c3e50;
-                    }}
-                    .facial-zones {{
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                        gap: 15px;
-                        margin-top: 20px;
-                    }}
-                    .zone-card {{
-                        background: #fff;
-                        border: 1px solid #eee;
-                        border-radius: 6px;
-                        padding: 15px;
-                    }}
-                    .zone-header {{
-                        display: flex;
-                        justify-content: space-between;
-                        margin-bottom: 10px;
-                        padding-bottom: 8px;
-                        border-bottom: 1px solid #eee;
-                    }}
-                    .zone-name {{
                         font-weight: 600;
-                        color: #2c3e50;
                     }}
-                    .zone-status {{
-                        color: #e74c3c;
-                        font-weight: 500;
-                    }}
-                    .highlight {{
-                        border: 2px solid #e74c3c;
-                        background: #fdecea;
+                    
+                    .diagnosis-text br {{
+                        margin-bottom: 12px;
+                        display: block;
+                        content: "";
                     }}
                 </style>
             </head>
@@ -1573,6 +1462,39 @@ class MainUI(QMainWindow):
             <p>{report_text.replace(chr(10), '<br>')}</p>
         </div>
         ''')
+
+    def show_ai_response(self, response):
+        """显示AI回复"""
+        # 清空旧内容
+        self.chat_history.clear()
+        
+        # 设置Markdown支持
+        self.chat_history.setOpenExternalLinks(True)
+        self.chat_history.document().setDefaultStyleSheet("""
+            pre {
+                white-space: pre-wrap;
+                background: #f8f9fa;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            code {
+                background: #f8f9fa;
+                padding: 2px 4px;
+            }
+            blockquote {
+                border-left: 3px solid #3498db;
+                margin: 5px 0;
+                padding-left: 10px;
+                color: #666;
+            }
+        """)
+        
+        # 显示渲染后的HTML
+        self.chat_history.setHtml(response)
+        
+        # 自动滚动到底部
+        scrollbar = self.chat_history.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
 
 # 主程序入口
