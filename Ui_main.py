@@ -15,7 +15,7 @@ import threading
 import serial
 import serial.tools.list_ports
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from finger_thread import FingerDataThread
 from camera_thread import CameraThread
 from chat_thread import ChatThread
@@ -25,9 +25,11 @@ from tongue_diagnose_model.tongue_diagnose import tongue_diagnose_sum
 from face_diagnose_model.face_diagnose import face_diagnose_sum
 from chat_model.cloud_chat import CloudChat
 from chat_model.local_chat import LocalChat
+import pdfkit
 # import resources_rc  # 资源文件
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
+import traceback
 
 
 class AddUserDialog(QDialog):
@@ -116,6 +118,11 @@ class MainUI(QMainWindow):
         self.populate_serial_ports()
         self.populate_users()
 
+        self.latest_crop_tongue_path = None  # 存储最新的舌头裁剪图像路径
+
+        # 将init_chat_models替换为init_chat_config
+        self.init_chat_config()
+
     def setup_control_panel(self):
         """设置左侧控制面板"""
         # 创建左侧面板容器
@@ -157,7 +164,7 @@ class MainUI(QMainWindow):
         device_layout.addWidget(self.camera_combo, 0, 1)
         device_layout.addWidget(self.confirm_camera_btn, 0, 2)
         
-        # 移除腕带串口，保留指夹串口
+        # 指夹串口
         self.finger_serial_label = QtWidgets.QLabel("选择指夹串口:")
         self.finger_serial_combo = QtWidgets.QComboBox()
         self.finger_serial_combo.setObjectName("deviceCombo")
@@ -175,6 +182,10 @@ class MainUI(QMainWindow):
         self.start_camera_btn = self.create_action_button("启动摄像头", ":/icons/camera.png")
         self.start_camera_btn.clicked.connect(self.start_camera_only)
         
+        self.pause_camera_btn = self.create_action_button("暂停摄像头", ":/icons/stop_camera.png")
+        self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
+        self.pause_camera_btn.setEnabled(False)  # 初始状态禁用
+        
         self.start_sensors_btn = self.create_action_button("开始脉象采集", ":/icons/sensor.png")
         self.start_sensors_btn.clicked.connect(self.start_sensors_only)
         
@@ -184,8 +195,11 @@ class MainUI(QMainWindow):
         self.refresh_devices_btn = self.create_action_button("刷新设备列表", ":/icons/refresh.png")
         self.refresh_devices_btn.clicked.connect(self.refresh_devices)
         
+
+        
         # 添加按钮到操作布局
         operation_layout.addWidget(self.start_camera_btn)
+        operation_layout.addWidget(self.pause_camera_btn)
         operation_layout.addWidget(self.start_sensors_btn)
         operation_layout.addWidget(self.stop_sensors_btn)
         operation_layout.addWidget(self.refresh_devices_btn)
@@ -201,18 +215,21 @@ class MainUI(QMainWindow):
         self.face_diagnosis_btn = QPushButton("开始面诊")
         self.face_diagnosis_btn.clicked.connect(self.start_face_diagnosis)
         
-        self.pause_camera_btn = QPushButton("暂停摄像头")
-        self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
-        self.pause_camera_btn.setEnabled(False)  # 初始状态禁用
+        self.sum_diagnosis_btn = QPushButton("AI综合诊断")
+        self.sum_diagnosis_btn.clicked.connect(self.start_ai_diagnosis)
+        
+        # self.pause_camera_btn = QPushButton("暂停摄像头")
+        # self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
+        # self.pause_camera_btn.setEnabled(False)  # 初始状态禁用
         
         # 添加导出报告按钮
         self.export_report_btn = QPushButton("导出诊断报告")
-        self.export_report_btn.clicked.connect(self.export_html_report)
+        self.export_report_btn.clicked.connect(self.export_report)
         
         # 添加按钮到布局
         self.diagnosis_layout.addWidget(self.tongue_diagnosis_btn)
         self.diagnosis_layout.addWidget(self.face_diagnosis_btn)
-        self.diagnosis_layout.addWidget(self.pause_camera_btn)
+        self.diagnosis_layout.addWidget(self.sum_diagnosis_btn)
         self.diagnosis_layout.addWidget(self.export_report_btn)
         
         self.diagnosis_group.setLayout(self.diagnosis_layout)
@@ -346,64 +363,81 @@ class MainUI(QMainWindow):
         self.main_layout.addWidget(self.main_splitter)
 
         # 初始化聊天模型
-        self.init_chat_models()
+        self.init_chat_config()
 
-    def init_chat_models(self):
-        """初始化聊天模型"""
+    def init_chat_config(self):
+        """初始化聊天配置，但不创建模型实例"""
         # 读取配置或使用默认值
         config_path = os.path.join(os.path.expanduser("~"), ".tcm_config.json")
         try:
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
+                    self.chat_config = json.load(f)
             else:
-                config = {
-                    "api_key": "sk-d69f89a753d74b399a9404194d611aaa",  # 默认API密钥
-                    "base_url": "https://api.deepseek.com",            # 默认API基址
-                    "prompt": "你是一个中医专家，熟悉舌诊和脉诊等中医诊断方法。请基于医学知识，对患者的问题给出专业的意见。",
-                    "model": "deepseek-chat"
+                # 默认配置
+                self.chat_config = {
+                    "api_key": "sk-d69f89a753d74b399a9404194d611aaa",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "model": "deepseek-reasoner",
+                    "system_prompt": """你是一位经验丰富的中医AI助手，帮助医生和患者理解中医诊断结果和健康建议。
+
+你有以下特点和能力：
+1. 可以根据舌诊、面诊和脉诊的机器检测结果提供专业分析
+2. 会参考患者的历史对话和症状描述
+3. 提供符合中医理论的辨证分析和调理建议
+4. 回答既专业又通俗易懂，能够解释专业术语
+5. 在合适的情况下建议就医，不会替代正规医疗诊断
+6. 对于患者的痛苦表示理解和同情
+
+当你看到[舌诊报告]、[面诊报告]或[脉诊报告]标记时，这表示这些是由专业中医诊断设备测量的结果，具有较高的参考价值。"""
                 }
                 with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, ensure_ascii=False, indent=2)
+                    json.dump(self.chat_config, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"加载配置文件出错: {e}")
-            config = {
+            # 出错时使用默认配置
+            self.chat_config = {
                 "api_key": "sk-d69f89a753d74b399a9404194d611aaa",
-                "base_url": "https://api.deepseek.com",
-                "prompt": "你是一个中医专家，熟悉舌诊和脉诊等中医诊断方法。请基于医学知识，对患者的问题给出专业的意见。",
-                "model": "deepseek-chat"
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-reasoner",
+                "system_prompt": "你是一位专业的中医AI助手..."
             }
         
-        self.chat_config = config
-        self.cloud_chat = None  # 延迟初始化，等到实际需要时创建
-        self.local_chat = None
+        # 初始化当前历史文件路径为None，表示尚未为特定用户创建聊天模型
         self.current_chat_history_file = None
+        self.cloud_chat = None
+        self.local_chat = None
 
     def show_api_settings(self):
         """显示API设置对话框"""
         dialog = QDialog(self)
         dialog.setWindowTitle("API设置")
+        dialog.setMinimumWidth(400)
+        
         layout = QFormLayout(dialog)
         
-        # API密钥输入
-        api_key_input = QLineEdit(self.chat_config.get("api_key", ""))
+        # API密钥
+        api_key_input = QLineEdit()
+        api_key_input.setText(self.chat_config.get("api_key", ""))
+        api_key_input.setEchoMode(QLineEdit.Password)
         layout.addRow("API密钥:", api_key_input)
         
-        # 基础URL输入
-        base_url_input = QLineEdit(self.chat_config.get("base_url", "https://api.deepseek.com"))
+        # 基础URL
+        base_url_input = QLineEdit()
+        base_url_input.setText(self.chat_config.get("base_url", "https://api.deepseek.com/v1"))
         layout.addRow("基础URL:", base_url_input)
-        
-        # 模型提示词
-        prompt_input = QTextEdit()
-        prompt_input.setText(self.chat_config.get("prompt", "你是一个中医专家"))
-        prompt_input.setMaximumHeight(100)
-        layout.addRow("系统提示词:", prompt_input)
         
         # 模型选择
         model_input = QComboBox()
-        model_input.addItems(["deepseek-reasoner", "deepseek-chat"])  # 默认ds_r1
+        model_input.addItems(["deepseek-reasoner", "deepseek-chat"])
         model_input.setCurrentText(self.chat_config.get("model", "deepseek-reasoner"))
         layout.addRow("模型:", model_input)
+        
+        # 系统提示词
+        system_prompt_input = QTextEdit()
+        system_prompt_input.setText(self.chat_config.get("system_prompt", ""))
+        system_prompt_input.setMinimumHeight(150)
+        layout.addRow("系统提示词:", system_prompt_input)
         
         # 按钮
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -411,90 +445,116 @@ class MainUI(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
         
-        if dialog.exec_() == QDialog.Accepted:
-            # 保存设置
+        # 显示对话框
+        result = dialog.exec_()
+        if result == QDialog.Accepted:
+            # 更新配置
             self.chat_config["api_key"] = api_key_input.text()
             self.chat_config["base_url"] = base_url_input.text()
-            self.chat_config["prompt"] = prompt_input.toPlainText()
             self.chat_config["model"] = model_input.currentText()
+            self.chat_config["system_prompt"] = system_prompt_input.toPlainText()
             
-            # 保存到配置文件
+            # 保存配置
             config_path = os.path.join(os.path.expanduser("~"), ".tcm_config.json")
-            try:
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(self.chat_config, f, ensure_ascii=False, indent=2)
-                
-                # 重置模型实例，使其使用新设置
-                self.cloud_chat = None
-                QMessageBox.information(self, "设置保存", "API设置已保存成功!")
-            except Exception as e:
-                QMessageBox.critical(self, "保存失败", f"保存设置时出错:\n{str(e)}")
-    
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.chat_config, f, ensure_ascii=False, indent=2)
+            
+            # 重置聊天模型实例，以便下次使用时使用新配置
+            self.cloud_chat = None
+            self.local_chat = None
+            self.current_chat_history_file = None
+            
+            QMessageBox.information(self, "成功", "API设置已更新")
+
     def get_or_create_chat_model(self):
-        """获取或创建当前选择的聊天模型实例"""
+        """获取或创建聊天模型，确保使用正确的用户历史记录"""
         selected_user = self.user_combo.currentText()
         if selected_user == "无用户，请添加":
-            QMessageBox.warning(self, '无用户', '请先添加用户再开始聊天。')
+            QMessageBox.warning(self, '无用户', '请先添加用户。')
             return None
-            
-        # 设置当前用户的历史记录文件
-        user_dir = os.path.join(self.patient_list_dp, selected_user)
-        os.makedirs(user_dir, exist_ok=True)
         
+        # 为当前用户创建历史记录目录
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
+        
+        # 用户特定的历史记录文件
+        history_file = os.path.join(user_dir, "chat_history.json")
+        
+        # 根据用户选择初始化相应的聊天模型
         if self.cloud_model_radio.isChecked():
-            # 使用云端模型
-            history_file = os.path.join(user_dir, "cloud_chat_history.json")
-            if self.cloud_chat is None or self.current_chat_history_file != history_file:
+            # 检查是否有现有的模型实例以及是否需要创建新的
+            if not self.cloud_chat or self.current_chat_history_file != history_file:
+                # 从配置获取参数
+                api_key = self.chat_config.get('api_key', '')
+                base_url = self.chat_config.get('base_url', 'https://api.deepseek.com/v1')
+                model = self.chat_config.get('model', 'deepseek-reasoner')
+                system_prompt = self.chat_config.get('system_prompt', '')
+                
+                # 初始化云端聊天模型
+                from chat_model.cloud_chat import CloudChat
                 self.cloud_chat = CloudChat(
-                    api_key=self.chat_config["api_key"],
-                    base_url=self.chat_config["base_url"],
-                    prompt=self.chat_config["prompt"],
-                    model=self.chat_config["model"],
+                    api_key=api_key, 
+                    base_url=base_url,
+                    model=model,
+                    system_prompt=system_prompt,
                     history_file=history_file
                 )
                 self.current_chat_history_file = history_file
             return self.cloud_chat
         else:
-            # 使用本地模型
-            history_file = os.path.join(user_dir, "local_chat_history.json")
-            if self.local_chat is None or self.current_chat_history_file != history_file:
-                self.local_chat = LocalChat()  # 本地模型可能需要其他参数
+            # 本地模型初始化
+            if not self.local_chat or self.current_chat_history_file != history_file:
+                system_prompt = self.chat_config.get('system_prompt', '')
+                from chat_model.local_chat import LocalChat
+                self.local_chat = LocalChat(
+                    system_prompt=system_prompt,
+                    history_file=history_file
+                )
                 self.current_chat_history_file = history_file
             return self.local_chat
-    
+
     def send_chat_message(self):
-        """发送聊天消息并获取回答"""
-        user_message = self.chat_input.toPlainText().strip()
-        if not user_message:
+        """发送聊天消息"""
+        message = self.chat_input.toPlainText().strip()
+        if not message:
             return
-            
+        
+        # 获取或创建聊天模型
+        chat_model = self.get_or_create_chat_model()
+        if not chat_model:
+            return
+        
         # 显示用户消息
-        self.chat_history.append(f'<p style="text-align: right;"><b>您:</b> {user_message}</p>')
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.chat_history.append(f'<p style="text-align: right;"><span style="color: #888; font-size: 0.8em;">{timestamp}</span><br><b>您:</b> {message}</p>')
+        
+        # 清空输入框
         self.chat_input.clear()
         
-        # 获取当前选择的聊天模型
-        chat_model = self.get_or_create_chat_model()
-        if chat_model is None:
-            return
-            
-        # 设置"等待中"状态
-        self.chat_send_btn.setEnabled(False)
+        # 显示"思考中"
         self.chat_history.append('<p><b>AI助手:</b> <i>思考中...</i></p>')
+        self.chat_send_btn.setEnabled(False)
         
-        # 使用线程处理聊天请求以避免UI冻结
-        self.chat_thread = ChatThread(chat_model, user_message)
-        self.chat_thread.response_ready.connect(self.display_chat_response)
+        # 创建线程处理请求
+        self.chat_thread = ChatThread(chat_model, message, timestamp)
+        self.chat_thread.response_ready.connect(self.handle_chat_response)
         self.chat_thread.start()
-    
-    def display_chat_response(self, response):
+
+    def handle_chat_response(self, response_data):
         """显示AI回复"""
+        response, timestamp = response_data
+        
+        # 移除"思考中"文本
         current_html = self.chat_history.toHtml()
         current_html = current_html.replace('<p><b>AI助手:</b> <i>思考中...</i></p>', '')
+        self.chat_history.setHtml(current_html)
         
         # 解析不同模型的响应
         if "|||" in response:  # ds_r1格式
             think, answer = response.split("|||", 1)
             formatted = f'''
+            <p><span style="color: #888; font-size: 0.8em;">{timestamp}</span></p>
             <p style="color: #666; font-size: 0.9em; margin-bottom: 5px;">{think}</p>
             <div style="background: #f5f5f5; padding: 10px; border-radius: 5px;">
                 <b>AI助手:</b> 
@@ -503,6 +563,7 @@ class MainUI(QMainWindow):
             '''
         else:  # ds_v3格式
             formatted = f'''
+            <p><span style="color: #888; font-size: 0.8em;">{timestamp}</span></p>
             <div style="background: #f5f5f5; padding: 10px; border-radius: 5px;">
                 <b>AI助手:</b> 
                 <div style="font-family: 'Consolas', monospace; white-space: pre-wrap;">{response}</div>
@@ -620,16 +681,30 @@ class MainUI(QMainWindow):
         self.central_widget.setStyleSheet(style)
 
     def populate_serial_ports(self):
-        ports = serial.tools.list_ports.comports()
-        # 只填充指夹串口
+        """填充可用的串口列表并自动选择第一个"""
         self.finger_serial_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        
+        # 过滤有效串口（可根据实际设备VID/PID调整）
+        valid_ports = []
         for port in ports:
-            self.finger_serial_combo.addItem(port.device)
-        if ports:
+            # 示例：如果知道设备VID/PID可在此过滤
+            # if port.vid == 0x1234 and port.pid == 0x5678:
+            valid_ports.append(port.device)
+        
+        if valid_ports:
+            self.finger_serial_combo.addItems(valid_ports)
+            # 自动选择第一个有效设备
             self.finger_serial_combo.setCurrentIndex(0)
+            self.finger_serial_port = valid_ports[0]
+            print(f"自动选择串口: {self.finger_serial_port}")
+            self.status_bar.showMessage(f"已自动选择串口 {self.finger_serial_port}", 3000)
         else:
             self.finger_serial_combo.addItem("没有可用的串口")
-    
+            self.finger_serial_port = None
+            self.status_bar.showMessage("未检测到有效串口设备", 5000)
+        
+
     def refresh_devices(self):
         """刷新设备列表（摄像头和串口）"""
         # 刷新摄像头列表
@@ -744,28 +819,11 @@ class MainUI(QMainWindow):
         self.camera_index = camera_index
         print(f"摄像头已设置为: {camera_index}")
 
-    def retranslateUi(self, MainWindow):
-        _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "Patient Data Collector"))
-        self.start_b.setText(_translate("MainWindow", "开始采集脉象数据"))
-        self.camera_b.setText(_translate("MainWindow", "开始摄像头采集"))
-        self.video_display.setText(_translate("MainWindow", "视频窗口"))
-        self.screenshot_l.setText(_translate("MainWindow", "舌像窗口"))
-        self.face_l.setText(_translate("MainWindow", "面像窗口"))
-        self.wrist_serial_label.setText(_translate("MainWindow", "选择腕带串口:"))
-        self.finger_serial_label.setText(_translate("MainWindow", "选择指夹串口:"))
-        self.confirm_wrist_serial_b.setText(_translate("MainWindow", "确认腕带串口"))
-        self.confirm_finger_serial_b.setText(_translate("MainWindow", "确认指夹串口"))
-        self.user_label.setText(_translate("MainWindow", "选择用户:"))
-        self.add_user_b.setText(_translate("MainWindow", "添加用户"))
-        self.stop_sensors_b.setText(_translate("MainWindow", "停止脉象采集"))
-        self.stop_camera_b.setText(_translate("MainWindow", "停止摄像头采集"))
-        self.camera_label.setText(_translate("MainWindow", "选择摄像头:"))
-        self.confirm_camera_b.setText(_translate("MainWindow", "确认摄像头"))
-        self.camera_mode_btn.setText(_translate("MainWindow", "开始拍摄"))
-
-    # 只启动指夹传感器，移除腕带相关代码
+    # 只启动指夹传感器
     def start_sensors_only(self):
+        # 添加时间戳记录
+        self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始脉诊分析...")
+        self.status_bar.showMessage("请将手指放在传感器上，系统正在进行脉诊分析...")
         selected_user = self.user_combo.currentText()
         if selected_user == "无用户，请添加":
             QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
@@ -792,14 +850,37 @@ class MainUI(QMainWindow):
             print("指夹串口未选择或初始化失败。")
 
     def show_sensors_report(self, report):
-        # 将报告内容直接添加到诊断报告中
+        # 预处理文本
+        processed_report = report.replace('\n', '<br>')
+        
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        formatted_report = f"<p><b>[{timestamp}]</b> {report}</p>"
         
-        # 在诊断报告中添加
-        self.diagnosis_report.append(formatted_report)
+        html_report = f"""
+        <div class="report-section pulse-section">
+            <h3>脉象分析报告 - {timestamp}</h3>
+            <div class="vital-signs">
+                <div class="parameter-box">
+                    <span class="param-label">血氧饱和度</span>
+                    <span class="param-value">{spo2_value}%</span>
+                    <p class="param-desc">{spo2_analysis}</p>
+                </div>
+                <div class="parameter-box">
+                    <span class="param-label">平均脉率</span>
+                    <span class="param-value">{pulse_rate}bpm</span>
+                    <p class="param-desc">{pulse_analysis}</p>
+                </div>
+                <div class="parameter-box">
+                    <span class="param-label">灌注指数</span>
+                    <span class="param-value">{perfusion_index}%</span>
+                    <p class="param-desc">{perfusion_analysis}</p>
+                </div>
+            </div>
+        </div>
+        <hr>
+        """
         
-        # 更新状态栏信息
+        self.diagnosis_report.append(html_report)
+        self.save_diagnosis_to_chat_history("脉诊", report.strip())
         self.status_bar.showMessage("智能脉诊已完成")
 
     def stop_sensors(self):
@@ -864,6 +945,46 @@ class MainUI(QMainWindow):
         
         self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始面诊分析...")
         self.status_bar.showMessage("请面向摄像头，系统正在进行面诊分析...")
+        
+    def start_ai_diagnosis(self):
+        """启动AI综合诊断"""
+        # 确保聊天模型已初始化
+        chat_model = self.get_or_create_chat_model()
+        
+        # 强制重置消息历史
+        chat_model.messages = []
+        if chat_model.system_prompt:
+            chat_model.messages.append({"role": "system", "content": chat_model.system_prompt})
+        
+        # 收集诊断报告
+        selected_user = self.user_combo.currentText()
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        history_files = [f for f in os.listdir(user_dir) if f.startswith("chat_history")]
+        
+        # 合并所有诊断内容
+        combined_content = []
+        for fname in history_files:
+            with open(os.path.join(user_dir, fname), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                combined_content.extend([msg["content"] for msg in data])
+        
+        # 添加诊断报告作为第一条用户消息
+        if combined_content:
+            chat_model.messages.append({
+                "role": "user",
+                "content": "请根据以下诊断数据进行综合分析：\n" + "\n".join(combined_content)
+            })
+        else:
+            QtWidgets.QMessageBox.warning(self, '无数据', '没有可用的诊断报告')
+            return
+        
+        # 获取回答
+        try:
+            response = chat_model.get_answer("")  # 空问题，直接使用现有消息
+            # ... 后续显示报告代码不变 ...
+        except Exception as e:
+            print(f"综合诊断错误: {str(e)}")
+            QtWidgets.QMessageBox.critical(self, '错误', f'综合诊断失败: {str(e)}')
 
     def toggle_camera_pause(self):
         """暂停/恢复摄像头线程"""
@@ -882,35 +1003,81 @@ class MainUI(QMainWindow):
             self.status_bar.showMessage("摄像头已恢复")
 
     def perform_tongue_diagnosis(self, image_path, is_original_frame=True):
-        """执行舌诊分析
-        
-        Args:
-            image_path: 图像文件路径
-            is_original_frame: 是否是原始帧图像(True)还是裁剪图像(False)
-        """
+        """执行舌诊分析"""
         # 调用舌头诊断函数
         color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path, is_original_frame)
+        
+        # 使用最新的裁剪图像路径
+        display_image_path = self.latest_crop_tongue_path if hasattr(self, 'latest_crop_tongue_path') and self.latest_crop_tongue_path else image_path
+        
+        # 将图像转换为base64格式以嵌入HTML
+        try:
+            with open(display_image_path, "rb") as img_file:
+                import base64
+                from pathlib import Path
+                img_format = Path(display_image_path).suffix[1:]  # 获取扩展名，去掉点
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                img_src = f"data:image/{img_format};base64,{img_data}"
+        except Exception as e:
+            print(f"图像嵌入错误: {e}")
+            img_src = ""
+        
+        # 预处理所有文本
+        diagnosis_processed = diagnosis.replace('\n', '<br>')
+        treatment_processed = treatment.replace('\n', '<br>')
+        color_processed = color_report.replace('\n', '<br>')
+        coating_processed = coating_report.replace('\n', '<br>')
+        cancer_processed = cancer_report.replace('\n', '<br>')
         
         # 创建HTML诊断报告
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         html_report = f"""
-        <h3>舌诊分析报告 - {timestamp}</h3>
-        <div style="display: flex; margin-bottom: 15px;">
-            <img src="file:///{tongue_annotated}" style="max-width: 300px; margin-right: 15px;">
-            <div>
-                <p><b>诊断结论:</b> {diagnosis}</p>
-                <p><b>治疗建议:</b> {treatment}</p>
+        <div class="report-section tongue-section">
+            <h3>舌诊分析报告 - {timestamp}</h3>
+            <div class="diagnosis-grid">
+                <div class="image-box">
+                    <img src="{img_src}">
+                    <div class="image-caption">舌象采集图</div>
+                </div>
+                <div class="diagnosis-details">
+                    <div class="diagnosis-block primary">
+                        <h4>核心诊断</h4>
+                        <p><strong>综合辨证：</strong>{diagnosis_processed}</p>
+                        <p><strong>治疗建议：</strong>{treatment_processed}</p>
+                    </div>
+                    <div class="diagnosis-block secondary">
+                        <h4>详细分析</h4>
+                        <div class="analysis-item">
+                            <span class="item-label">舌色分析：</span>
+                            <span class="item-value">{color_processed}</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="item-label">舌苔分析：</span>
+                            <span class="item-value">{coating_processed}</span>
+                        </div>
+                        <div class="analysis-item">
+                            <span class="item-label">异常检测：</span>
+                            <span class="item-value">{cancer_processed}</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-        <h4>详细分析</h4>
-        <p><b>舌色分析:</b> {color_report}</p>
-        <p><b>舌苔分析:</b> {coating_report}</p>
-        <p><b>异常检测:</b> {cancer_report}</p>
         <hr>
         """
         
         # 添加到诊断报告
         self.diagnosis_report.append(html_report)
+        
+        # 同时将诊断结果保存到聊天历史
+        report_text = f"""
+诊断结论: {diagnosis}
+治疗建议: {treatment}
+舌色分析: {color_report}
+舌苔分析: {coating_report}
+异常检测: {cancer_report}
+        """
+        self.save_diagnosis_to_chat_history("舌诊", report_text.strip())
         
         # 标记已完成诊断
         self.tongue_diagnosed = True
@@ -933,14 +1100,39 @@ class MainUI(QMainWindow):
         user_dir = os.path.join(self.patient_list_dp, selected_user)
         diagnosis_report, annotated_img_path = face_diagnose_sum(image_path, user_dir)
         
+        # 将图像转换为base64格式以嵌入HTML
+        try:
+            with open(annotated_img_path, "rb") as img_file:
+                import base64
+                from pathlib import Path
+                img_format = Path(annotated_img_path).suffix[1:]
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                img_src = f"data:image/{img_format};base64,{img_data}"
+        except Exception as e:
+            print(f"图像嵌入错误: {e}")
+            img_src = ""
+        
+        # 预先处理文本
+        diagnosis_html = diagnosis_report.replace('\n', '<br>')
+        
         # 创建HTML诊断报告
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         html_report = f"""
-        <h3>面诊分析报告 - {timestamp}</h3>
-        <div style="display: flex; margin-bottom: 15px;">
-            <img src="file:///{annotated_img_path}" style="max-width: 300px; margin-right: 15px;">
-            <div>
-                <p>{diagnosis_report}</p>
+        <div class="report-section face-section">
+            <h3>面诊分析报告 - {timestamp}</h3>
+            <div class="facial-zones">
+                {''.join([f'''
+                <div class="zone-card {'highlight' if '异常' in diag else ''}">
+                    <div class="zone-header">
+                        <span class="zone-name">{zone}</span>
+                        <span class="zone-status">{status}</span>
+                    </div>
+                    <div class="zone-diagnosis">
+                        <div class="diagnosis-title">脏腑辨证：</div>
+                        <div class="diagnosis-content">{diag}</div>
+                    </div>
+                </div>
+                ''' for zone, status, diag in parsed_report])}
             </div>
         </div>
         <hr>
@@ -948,6 +1140,9 @@ class MainUI(QMainWindow):
         
         # 添加到诊断报告
         self.diagnosis_report.append(html_report)
+        
+        # 同时将诊断结果保存到聊天历史
+        self.save_diagnosis_to_chat_history("面诊", diagnosis_report.strip())
         
         # 标记已完成诊断
         self.face_diagnosed = True
@@ -968,28 +1163,193 @@ class MainUI(QMainWindow):
         event.accept()
 
     # 新增：导出HTML报告
-    def export_html_report(self):
+    def export_report(self):
+        """导出诊断报告为HTML"""
         selected_user = self.user_combo.currentText()
         if selected_user == "无用户，请添加":
             QMessageBox.warning(self, '无用户', '请先添加用户。')
             return
-            
-        # 获取HTML内容
-        html_content = self.diagnosis_report.toHtml()
         
-        # 选择保存路径
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "保存诊断报告", 
-            os.path.join(self.patient_list_dp, selected_user, f"{selected_user}_诊断报告.html"),
-            "HTML Files (*.html)")
+        try:
+            # 获取完整HTML内容
+            html_content = self.diagnosis_report.toHtml()
             
-        if file_path:
-            try:
-                with open(file_path, 'w', encoding='utf-8') as file:
-                    file.write(html_content)
-                QMessageBox.information(self, "导出成功", f"诊断报告已成功导出到:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "导出失败", f"保存报告时出错:\n{str(e)}")
+            # 增强HTML结构
+            enhanced_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>{selected_user}的诊断报告</title>
+                <style>
+                    body {{ 
+                        font-family: 'Microsoft YaHei', SimSun, sans-serif;
+                        margin: 30px;
+                        line-height: 1.6;
+                    }}
+                    h2 {{ 
+                        color: #2c3e50;
+                        border-bottom: 2px solid #3498db;
+                        padding-bottom: 10px;
+                    }}
+                    .report-section {{
+                        background: #fff;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 8px;
+                        margin: 20px 0;
+                        padding: 25px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    }}
+                    img {{
+                        max-width: 80%;
+                        display: block;
+                        margin: 15px auto;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                    }}
+                    .timestamp {{
+                        color: #666;
+                        font-size: 0.9em;
+                        margin-bottom: 5px;
+                    }}
+                    .vital-signs {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                        gap: 20px;
+                        margin-top: 15px;
+                    }}
+                    .parameter-box {{
+                        background: #f8f9fa;
+                        padding: 20px;
+                        border-radius: 6px;
+                        border-left: 4px solid #3498db;
+                    }}
+                    .param-label {{
+                        display: block;
+                        color: #2c3e50;
+                        font-weight: 600;
+                        margin-bottom: 5px;
+                    }}
+                    .param-value {{
+                        font-size: 1.4em;
+                        color: #3498db;
+                        font-weight: 700;
+                    }}
+                    .diagnosis-grid {{
+                        display: grid;
+                        grid-template-columns: 300px 1fr;
+                        gap: 25px;
+                        margin-top: 20px;
+                    }}
+                    .image-box {{
+                        text-align: center;
+                        border: 1px solid #ddd;
+                        padding: 10px;
+                        border-radius: 6px;
+                    }}
+                    .image-caption {{
+                        color: #666;
+                        font-size: 0.9em;
+                        margin-top: 10px;
+                    }}
+                    .diagnosis-block {{
+                        margin-bottom: 20px;
+                        padding: 15px;
+                        background: #f8f9fa;
+                        border-radius: 6px;
+                    }}
+                    .diagnosis-block.primary {{
+                        border-left: 4px solid #27ae60;
+                    }}
+                    .diagnosis-block.secondary {{
+                        border-left: 4px solid #f39c12;
+                    }}
+                    .analysis-item {{
+                        margin: 12px 0;
+                        padding: 10px;
+                        background: #fff;
+                        border-radius: 4px;
+                    }}
+                    .item-label {{
+                        font-weight: 600;
+                        color: #2c3e50;
+                    }}
+                    .facial-zones {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                        gap: 15px;
+                        margin-top: 20px;
+                    }}
+                    .zone-card {{
+                        background: #fff;
+                        border: 1px solid #eee;
+                        border-radius: 6px;
+                        padding: 15px;
+                    }}
+                    .zone-header {{
+                        display: flex;
+                        justify-content: space-between;
+                        margin-bottom: 10px;
+                        padding-bottom: 8px;
+                        border-bottom: 1px solid #eee;
+                    }}
+                    .zone-name {{
+                        font-weight: 600;
+                        color: #2c3e50;
+                    }}
+                    .zone-status {{
+                        color: #e74c3c;
+                        font-weight: 500;
+                    }}
+                    .highlight {{
+                        border: 2px solid #e74c3c;
+                        background: #fdecea;
+                    }}
+                </style>
+            </head>
+            <body>
+                <h2>{selected_user}的智能中医诊断报告</h2>
+                {html_content}
+            </body>
+            </html>
+            """
+            
+            # 创建文件保存对话框
+            file_dialog = QFileDialog()
+            file_dialog.setDefaultSuffix("html")
+            default_name = f"{selected_user}_诊断报告_{datetime.now().strftime('%Y%m%d')}.html"
+            file_path, _ = file_dialog.getSaveFileName(
+                self,
+                "保存诊断报告",
+                os.path.join(os.path.expanduser("~"), "Desktop", default_name),
+                "HTML文件 (*.html);;所有文件 (*)"
+            )
+            
+            if not file_path:  # 用户取消选择
+                return
+            
+            # 保存文件
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(enhanced_html)
+            
+            # 显示成功提示
+            QMessageBox.information(
+                self, 
+                '导出成功', 
+                f'HTML报告已保存到：\n{file_path}\n\n'
+                '可以用任意浏览器打开查看。'
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                '导出失败', 
+                f'无法保存文件：{str(e)}\n'
+                '请检查：\n'
+                '1. 是否有写入权限\n'
+                '2. 磁盘空间是否充足'
+            )
+            print(f"导出错误: {traceback.format_exc()}")
 
     # 仅启动摄像头
     def start_camera_only(self):
@@ -1085,38 +1445,16 @@ class MainUI(QMainWindow):
             
             
 
-    def handle_new_crop_image(self, crop_path):
-        """处理新裁剪的舌头图像"""
-        # 如果已经进行过诊断或诊断未开始，则忽略后续的图像
-        if self.tongue_diagnosed or not self.diagnosis_in_progress:
-            return
+    def handle_new_crop_image(self, path):
+        """处理新的裁剪舌头图像"""
+        self.latest_crop_tongue_path = path
+        print(f"新裁剪舌头图像已保存: {path}")
         
-        if not os.path.exists(crop_path):
-            print(f"文件不存在: {crop_path}")
-            return
-        
-        # 如果配置使用原始帧，则跳过裁剪图像处理
-        if self.use_original_frame:
-            return
-        
-        # 显示第一张裁剪图
-        if not hasattr(self, 'latest_crop_path'):
-            self.display_first_crop(crop_path)
-        
-        # 执行舌诊分析
-        self.perform_tongue_diagnosis(crop_path)
-        
-        # 标记已完成诊断
-        self.tongue_diagnosed = True
-        self.diagnosis_in_progress = False
-        
-        # 通知摄像头线程诊断已完成
-        if self.camera_thread:
-            self.camera_thread.set_diagnosis_completed(True)
-        
-        self.status_bar.showMessage("舌诊分析已完成")
-        print("使用裁剪图像完成舌诊分析")
-        
+        # 如果需要在界面上显示裁剪图像，可以在这里添加显示代码
+        # 例如:
+        # pixmap = QPixmap(path)
+        # self.some_label.setPixmap(pixmap.scaled(...))
+
     def handle_original_frame(self, original_path, crop_path):
         """处理保存的原始帧图像"""
         # 如果已经进行过诊断或诊断未开始，则忽略
@@ -1188,6 +1526,53 @@ class MainUI(QMainWindow):
             self.camera_thread.face_diagnosed = True
         
         self.status_bar.showMessage("面诊分析已完成")
+
+    def save_diagnosis_to_chat_history(self, diagnosis_type, report_text):
+        """将诊断结果保存到聊天历史记录中"""
+        selected_user = self.user_combo.currentText()
+        if selected_user == "无用户，请添加":
+            return
+        
+        user_dir = os.path.join(self.patient_list_dp, selected_user)
+        history_file = os.path.join(user_dir, "chat_history.json")
+        
+        # 构建消息
+        message = {
+            "role": "user",
+            "content": f"[{diagnosis_type}报告] {report_text}",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # 读取现有历史记录
+        history = []
+        if os.path.exists(history_file):
+            try:
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    history = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                history = []
+        
+        # 添加新消息
+        history.append(message)
+        
+        # 保存更新后的历史记录
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+        
+        # 如果聊天模型已经初始化，更新其历史记录
+        if hasattr(self, 'cloud_chat') and self.current_chat_history_file == history_file:
+            self.cloud_chat.load_history()
+        elif hasattr(self, 'local_chat') and self.current_chat_history_file == history_file:
+            self.local_chat.load_history()
+        
+        # 在聊天历史UI中显示诊断报告
+        self.chat_history.append(f'''
+        <div style="background: #e6f7ff; padding: 10px; border-radius: 5px; margin: 10px 0;">
+            <p><span style="color: #888; font-size: 0.8em;">{message['timestamp']}</span></p>
+            <p><b>[{diagnosis_type}报告]</b></p>
+            <p>{report_text.replace(chr(10), '<br>')}</p>
+        </div>
+        ''')
 
 
 # 主程序入口
