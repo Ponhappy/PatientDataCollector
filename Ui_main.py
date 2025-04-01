@@ -1005,23 +1005,35 @@ class MainUI(QMainWindow):
             print(f"图像嵌入错误: {e}")
             img_src = ""
         
-        # 预处理所有文本
+        # 预处理所有文本（修复反斜杠问题）
         diagnosis_processed = diagnosis.replace('\n', '<br>')
         treatment_processed = treatment.replace('\n', '<br>')
         color_processed = color_report.replace('\n', '<br>')
         coating_processed = coating_report.replace('\n', '<br>')
         cancer_processed = cancer_report.replace('\n', '<br>')
         
-        # 创建HTML诊断报告
         html_report = f"""
-        <div class="report-section face-section">
-            <h3>面诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
-            <div class="face-content">
-                <div class="face-image">
-                    <img src="{img_src}" alt="面部分析图">
+        <div class="report-section tongue-section">
+            <h3>舌诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
+            <div class="tongue-content">
+                <div class="tongue-image">
+                    <img src="{img_src}" alt="舌像分析图">
                 </div>
                 <div class="diagnosis-text">
-                    {diagnosis_report.replace('\n', '<br>').replace('【', '<strong>【').replace('】', '】</strong>')}
+                    <div class="tongue-parameters">
+                        <h4>舌色分析</h4>
+                        <p>{color_processed}</p>
+                        <h4>舌苔分析</h4>
+                        <p>{coating_processed}</p>
+                        <h4>异常检测</h4>
+                        <p>{cancer_processed}</p>
+                    </div>
+                    <div class="diagnosis-summary">
+                        <h4>诊断结论</h4>
+                        <p>{diagnosis_processed}</p>
+                        <h4>治疗建议</h4>
+                        <p>{treatment_processed}</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1074,16 +1086,19 @@ class MainUI(QMainWindow):
             print(f"图像嵌入错误: {e}")
             img_src = ""
         
-        # 生成HTML报告（直接使用原始内容）
+        # 预处理诊断报告（先处理换行符）
+        processed_report = diagnosis_report.replace('\n', '<br>').replace('【', '<strong>【').replace('】', '】</strong>')
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # 确保已导入datetime
+        
         html_report = f"""
         <div class="report-section face-section">
-            <h3>面诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
+            <h3>面诊分析报告 - {timestamp}</h3>
             <div class="face-content">
                 <div class="face-image">
                     <img src="{img_src}" alt="面部分析图">
                 </div>
                 <div class="diagnosis-text">
-                    {diagnosis_report.replace('\n', '<br>').replace('【', '<strong>【').replace('】', '】</strong>')}
+                    {processed_report}  <!-- 使用预处理后的变量 -->
                 </div>
             </div>
         </div>
@@ -1114,7 +1129,7 @@ class MainUI(QMainWindow):
             self.camera_thread.stop()
         event.accept()
 
-    # 新增：导出HTML报告
+
     def export_report(self):
         """导出诊断报告为HTML"""
         selected_user = self.user_combo.currentText()
@@ -1179,8 +1194,10 @@ class MainUI(QMainWindow):
                     }}
                     
                     .diagnosis-text {{
+                        white-space: pre-wrap;  /* 保留换行 */
+                        font-family: 'Microsoft YaHei', sans-serif;
+                        font-size: 16px;
                         line-height: 1.8;
-                        font-size: 15px;
                         color: #444;
                     }}
                     
@@ -1190,9 +1207,9 @@ class MainUI(QMainWindow):
                     }}
                     
                     .diagnosis-text br {{
-                        margin-bottom: 12px;
-                        display: block;
                         content: "";
+                        display: block;
+                        margin-bottom: 12px;
                     }}
                 </style>
             </head>
