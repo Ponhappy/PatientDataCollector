@@ -30,7 +30,8 @@ import pdfkit
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
 import traceback
-
+import pyqtgraph as pg
+import numpy as np
 
 class AddUserDialog(QDialog):
     def __init__(self, parent=None):
@@ -58,6 +59,7 @@ class AddUserDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.layout.addRow(self.buttons)
+        
 
     def get_data(self):
         return {
@@ -73,6 +75,7 @@ class MainUI(QMainWindow):
         super().__init__()
         self.setWindowTitle("智能中医四诊系统")
         self.setMinimumSize(1200, 800)  # 设置最小窗口大小
+        self.showMaximized()   # 设置窗口最大化
         
         # 初始化患者数据存储路径
         self.patient_list_dp = os.path.join(os.path.expanduser("~"), "patient_data")  # 默认存储在用户目录下
@@ -215,8 +218,8 @@ class MainUI(QMainWindow):
         self.face_diagnosis_btn = QPushButton("开始面诊")
         self.face_diagnosis_btn.clicked.connect(self.start_face_diagnosis)
         
-        self.sum_diagnosis_btn = QPushButton("AI综合诊断")
-        self.sum_diagnosis_btn.clicked.connect(self.start_ai_diagnosis)
+        # self.sum_diagnosis_btn = QPushButton("AI综合诊断")
+        # self.sum_diagnosis_btn.clicked.connect(self.start_ai_diagnosis)
         
         # self.pause_camera_btn = QPushButton("暂停摄像头")
         # self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
@@ -229,7 +232,7 @@ class MainUI(QMainWindow):
         # 添加按钮到布局
         self.diagnosis_layout.addWidget(self.tongue_diagnosis_btn)
         self.diagnosis_layout.addWidget(self.face_diagnosis_btn)
-        self.diagnosis_layout.addWidget(self.sum_diagnosis_btn)
+        # self.diagnosis_layout.addWidget(self.sum_diagnosis_btn)
         self.diagnosis_layout.addWidget(self.export_report_btn)
         
         self.diagnosis_group.setLayout(self.diagnosis_layout)
@@ -273,6 +276,38 @@ class MainUI(QMainWindow):
         
         camera_view_layout.addWidget(self.video_display)
         
+        # 创建实时脉搏波形显示区域
+        finger_pulse_container = QWidget()
+        finger_pulse_layout = QVBoxLayout(finger_pulse_container)
+        finger_pulse_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 创建绘图窗口
+        self.graphWidget = pg.PlotWidget()
+        # self.setCentralWidget(self.graphWidget)
+        self.graphWidget.setBackground("w")  # 设置白色背景
+        self.graphWidget.setTitle("串口数据实时波形", color="black", size="15pt")
+        self.graphWidget.setLabel("left", "信号值", color="black", size="12pt")
+        self.graphWidget.setLabel("bottom", "时间 (s)", color="black", size="12pt")
+        self.graphWidget.showGrid(x=True, y=True)
+        # 获取X轴和Y轴的AxisItem对象
+        x_axis = self.graphWidget.getAxis('bottom')
+        y_axis = self.graphWidget.getAxis('left')
+
+        # 隐藏刻度标签，同时保留刻度
+        x_axis.setTicks([[]])
+        y_axis.setTicks([[]])
+        # 固定 X 轴和 Y 轴范围
+        self.cnt=0
+        self.x_time = []
+        self.y_wave = []
+        self.time_window=10
+        self.graphWidget.setXRange(0, self.time_window)  # 横轴固定 -10 到 0 秒
+        self.graphWidget.setYRange(0, 150)   # 纵轴范围根据实际数据调整
+        self.finger_start_time=None
+        finger_pulse_layout.addWidget(self.graphWidget)
+
+
+
         # 创建聊天窗口区域
         chat_container = QWidget()
         chat_layout = QVBoxLayout(chat_container)
@@ -309,7 +344,7 @@ class MainUI(QMainWindow):
         self.chat_input = QTextEdit()
         self.chat_input.setObjectName("chatInput")
         self.chat_input.setMaximumHeight(80)
-        self.chat_input.setPlaceholderText("在此输入问题...")
+        self.chat_input.setPlaceholderText("请在此描述您的症状...")
         
         self.chat_send_btn = QPushButton("发送")
         self.chat_send_btn.setObjectName("chatSendBtn")
@@ -325,7 +360,10 @@ class MainUI(QMainWindow):
         
         # 添加到显示分割器
         self.display_splitter.addWidget(camera_view_container)
+        self.display_splitter.addWidget(finger_pulse_container)
         self.display_splitter.addWidget(chat_container)
+        
+        self.display_splitter.setStretchFactor(0, 3)
         self.display_splitter.setStretchFactor(0, 3)
         self.display_splitter.setStretchFactor(1, 1)
         
@@ -344,6 +382,7 @@ class MainUI(QMainWindow):
         report_title = QLabel("诊断报告")
         report_title.setObjectName("reportTitle")
         report_title.setAlignment(Qt.AlignCenter)
+        report_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2c3e50;")
         
         # 诊断报告内容 - 使用QTextBrowser以支持HTML内容和滚动
         self.diagnosis_report = QTextBrowser()
@@ -821,6 +860,7 @@ class MainUI(QMainWindow):
 
     # 只启动指夹传感器
     def start_sensors_only(self):
+        self.finger_start_time = datetime.now()
         # 添加时间戳记录
         self.diagnosis_report.append(f"[{datetime.now().strftime('%H:%M:%S')}] 开始脉诊分析...")
         self.status_bar.showMessage("请将手指放在传感器上，系统正在进行脉诊分析...")
@@ -838,10 +878,11 @@ class MainUI(QMainWindow):
             if self.finger_thread is None:
                 self.finger_thread = FingerDataThread(
                     serial_port=self.finger_serial_port,
-                    baudrate=115200,
+                    baudrate=38400,
                 )
                 self.finger_thread.dir = user_dir
-                self.finger_thread.data_received.connect(self.show_sensors_report)
+                self.finger_thread.wave_received.connect(self.display_sensor_waveform)
+                self.finger_thread.report_received.connect(self.show_sensors_report)
                 self.finger_thread.start()
                 print("指夹数据采集线程已启动。")
             else:
@@ -851,7 +892,7 @@ class MainUI(QMainWindow):
 
     def show_sensors_report(self, report):
         # 直接使用原始报告内容，仅转换换行符
-        processed_report = report.replace('\n', '<br>')
+        processed_report = report.replace('\n', '<br>').replace('【', '<strong>【').replace('】', '】</strong>')
         
         html_report = f"""
         <div class="report-section pulse-section">
@@ -869,6 +910,9 @@ class MainUI(QMainWindow):
     def stop_sensors(self):
         if self.finger_thread is not None:
             self.finger_thread.stop()
+            self.cnt=0
+            self.x_time=[]
+            self.y_wave=[]
             self.finger_thread = None
             print("指夹数据采集线程已停止。")
 
@@ -1338,8 +1382,35 @@ class MainUI(QMainWindow):
                                    QtCore.Qt.KeepAspectRatio)
             self.video_display.setPixmap(pixmap)
         except Exception as e:
-            print(f"显示摄像头帧出错: {e}")
+            print(f"显示摄像头帧d出错: {e}")
 
+    
+    def display_sensor_waveform(self, data):
+        """显示脉搏数据"""
+        try:
+            if self.finger_start_time is None:
+                self.finger_start_time = datetime.now()
+            current_time = datetime.now()
+            time_diff = (current_time - self.finger_start_time).total_seconds()
+            relative_time = time_diff % self.time_window
+            cnt = time_diff // self.time_window
+            if cnt>self.cnt:
+                self.cnt=cnt
+                self.x_time = []
+                self.y_wave = []
+                
+            for _, value in data:
+                self.x_time.append(relative_time)
+                self.y_wave.append(value)
+
+            self.graphWidget.clear()  # 清除旧曲线
+            self.graphWidget.plot(self.x_time, self.y_wave, pen=pg.mkPen(color='b', width=2))
+
+        except Exception as e:
+            print(f"接受脉搏数据出错: {e}")
+        
+    
+    
     def show_guidance(self, message):
         """显示检测引导提示"""
         print("调用show_guidance函数")
@@ -1472,13 +1543,13 @@ class MainUI(QMainWindow):
             self.local_chat.load_history()
         
         # 在聊天历史UI中显示诊断报告
-        self.chat_history.append(f'''
-        <div style="background: #e6f7ff; padding: 10px; border-radius: 5px; margin: 10px 0;">
-            <p><span style="color: #888; font-size: 0.8em;">{message['timestamp']}</span></p>
-            <p><b>[{diagnosis_type}报告]</b></p>
-            <p>{report_text.replace(chr(10), '<br>')}</p>
-        </div>
-        ''')
+        # self.chat_history.append(f'''
+        # <div style="background: #e6f7ff; padding: 10px; border-radius: 5px; margin: 10px 0;">
+        #     <p><span style="color: #888; font-size: 0.8em;">{message['timestamp']}</span></p>
+        #     <p><b>[{diagnosis_type}报告]</b></p>
+        #     <p>{report_text.replace(chr(10), '<br>')}</p>
+        # </div>
+        # ''')
 
     def show_ai_response(self, response):
         """显示AI回复"""
