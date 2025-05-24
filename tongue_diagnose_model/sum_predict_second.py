@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
 import datetime
+import os
 
 # ================== 配置中心 ==================
 CLASS_MAPS = {
@@ -47,13 +48,13 @@ CLASS_MAPS = {
 
 MODEL_PATHS = {
     "detection": "yolov8s.pt",
-    "舌色": "runs_color/train_results/weights/best.pt",
-    "舌形": "runs_shape/train_results/weights/best.pt",
-    "苔色": "runs_coating_color/train_results/weights/best.pt",
-    "苔质": "runs_coating_texture/train_results/weights/best.pt",
-    "舌态": "runs_condition/train_results/weights/best.pt",
-    "舌神": "runs_status/train_results/weights/best.pt",
-    "舌脉": "runs_vein/train_results/weights/best.pt"
+    "舌色": "tongue_diagnose_model/runs/runs_color/train_results/weights/best.pt",
+    "舌形": "tongue_diagnose_model/runs/runs_shape/train_results/weights/best.pt",
+    "苔色": "tongue_diagnose_model/runs/runs_coating_color/train_results/weights/best.pt",
+    "苔质": "tongue_diagnose_model/runs/runs_coating_texture/train_results/weights/best.pt",
+    "舌态": "tongue_diagnose_model/runs/runs_condition/train_results/weights/best.pt",
+    "舌神": "tongue_diagnose_model/runs/runs_status/train_results/weights/best.pt",
+    "舌脉": "tongue_diagnose_model/runs/runs_vein/train_results/weights/best.pt"
 }
 
 # ================== 诊断知识库 ==================
@@ -259,16 +260,57 @@ class TongueAnalysisSystem:
 
     def _load_models(self):
         """加载所有分类模型"""
-        return {cat: YOLO(path) for cat, path in MODEL_PATHS.items() if cat != "detection"}
+        models = {}
+        for cat, path in MODEL_PATHS.items():
+            if cat == "detection":
+                continue
+            try:
+                if not os.path.exists(path):
+                    print(f"错误: 模型文件不存在: {path}")
+                    continue
+                print(f"正在加载模型: {cat} (路径: {path})")
+                models[cat] = YOLO(path)
+                print(f"成功加载模型: {cat}")
+            except Exception as e:
+                print(f"错误: 无法加载模型 {cat}: {str(e)}")
+        return models
 
     def predict_category(self, img_path, category):
         """执行分类预测"""
-        model = self.models[category]
-        results = model.predict(img_path, conf=0.6)
-        if results[0].boxes:
-            class_id = int(results[0].boxes.cls[0].item())
-            return next(k for k, v in CLASS_MAPS[category].items() if v == class_id)
-        return "未检出"
+        try:
+            # 首先检查模型是否存在
+            if category not in self.models:
+                print(f"警告: 类别 '{category}' 的模型未加载")
+                return "未检出"
+            
+            model = self.models[category]
+            
+            # 检查图像是否存在
+            if not os.path.exists(img_path):
+                print(f"警告: 图像文件不存在: {img_path}")
+                return "未检出"
+            
+            # 执行预测
+            results = model.predict(img_path, conf=0.3)  # 降低置信度阈值
+            
+            # 如果检测到结果
+            if results[0].boxes and len(results[0].boxes.cls) > 0:
+                class_id = int(results[0].boxes.cls[0].item())
+                class_name = next((k for k, v in CLASS_MAPS[category].items() if v == class_id), None)
+                if class_name:
+                    print(f"成功检测 {category}: {class_name} (置信度: {results[0].boxes.conf[0].item():.2f})")
+                    return class_name
+                else:
+                    print(f"警告: 类别ID {class_id} 在 {category} 类别映射中未找到")
+            else:
+                print(f"警告: {category} 类别没有检测到任何对象")
+            
+            return "未检出"
+        except Exception as e:
+            print(f"错误: 预测 {category} 时出现问题: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return "未检出"
 
     def detect_tongue(self, img_path):
         """检测舌头区域并标注"""
@@ -461,14 +503,16 @@ def sum_predict(test_image):
         report_path, diagnosis, treatment
     )
 
-# 执行诊断
-result = sum_predict("img_3.png")
+# 只在直接运行脚本时执行诊断，而不是在导入时
+if __name__ == "__main__":
+    # 执行诊断
+    result = sum_predict("img_3.png")
 
-# 输出结果
-print("=== 基础特征 ===")
-print(result[-2])
+    # 输出结果
+    print("=== 基础特征 ===")
+    print(result[-2])
 
-print("\n=== 调理建议 ===")
-print(result[-1])
+    print("\n=== 调理建议 ===")
+    print(result[-1])
 
-print(f"\n报告路径: {result[-3]}")
+    print(f"\n报告路径: {result[-3]}")

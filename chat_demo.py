@@ -11,7 +11,7 @@ if __name__=="__main__":
     # #1、使用云端大模型
     if mode==1:
         # 必填项
-        api_key="sk-d69f89a753d74b399a9404194d611aaa"
+        api_key="sk-a0273f20dcd742b99d8580a48a67b51b"
         base_url="https://api.deepseek.com"
         # 非必填 可使用默认参数
         prompt="你是一个中医大神"

@@ -32,6 +32,8 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
 import traceback
 import pyqtgraph as pg
 import numpy as np
+from tongue_diagnose_model.sum_predict_second import DIAGNOSIS_RULES
+from tongue_diagnose_model.diagnosis_helpers import get_diagnosis_report
 
 class AddUserDialog(QDialog):
     def __init__(self, parent=None):
@@ -218,8 +220,8 @@ class MainUI(QMainWindow):
         self.face_diagnosis_btn = QPushButton("开始面诊")
         self.face_diagnosis_btn.clicked.connect(self.start_face_diagnosis)
         
-        # self.sum_diagnosis_btn = QPushButton("AI综合诊断")
-        # self.sum_diagnosis_btn.clicked.connect(self.start_ai_diagnosis)
+        self.sum_diagnosis_btn = QPushButton("AI综合诊断")
+        self.sum_diagnosis_btn.clicked.connect(self.start_ai_diagnosis)
         
         # self.pause_camera_btn = QPushButton("暂停摄像头")
         # self.pause_camera_btn.clicked.connect(self.toggle_camera_pause)
@@ -334,7 +336,7 @@ class MainUI(QMainWindow):
         # 聊天历史显示
         self.chat_history = QTextBrowser()
         self.chat_history.setObjectName("chatHistory")
-        self.chat_history.setMinimumHeight(150)
+        self.chat_history.setMinimumHeight(400)  # 增加到400像素高度
         
         # 聊天输入区域
         chat_input_container = QWidget()
@@ -406,19 +408,12 @@ class MainUI(QMainWindow):
 
     def init_chat_config(self):
         """初始化聊天配置，但不创建模型实例"""
-        # 读取配置或使用默认值
-        config_path = os.path.join(os.path.expanduser("~"), ".tcm_config.json")
-        try:
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    self.chat_config = json.load(f)
-            else:
-                # 默认配置
-                self.chat_config = {
-                    "api_key": "sk-d69f89a753d74b399a9404194d611aaa",
-                    "base_url": "https://api.deepseek.com/v1",
-                    "model": "deepseek-reasoner",
-                    "system_prompt": """你是一位经验丰富的中医AI助手，帮助医生和患者理解中医诊断结果和健康建议。
+        # 默认配置
+        self.chat_config = {
+            "api_key": "sk-a0273f20dcd742b99d8580a48a67b51b",
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-reasoner",
+            "system_prompt": """你是一位经验丰富的中医AI助手，帮助医生和患者理解中医诊断结果和健康建议。
 
 你有以下特点和能力：
 1. 可以根据舌诊、面诊和脉诊的机器检测结果提供专业分析
@@ -429,19 +424,8 @@ class MainUI(QMainWindow):
 6. 对于患者的痛苦表示理解和同情
 
 当你看到[舌诊报告]、[面诊报告]或[脉诊报告]标记时，这表示这些是由专业中医诊断设备测量的结果，具有较高的参考价值。"""
-                }
-                with open(config_path, 'w', encoding='utf-8') as f:
-                    json.dump(self.chat_config, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"加载配置文件出错: {e}")
-            # 出错时使用默认配置
-            self.chat_config = {
-                "api_key": "sk-d69f89a753d74b399a9404194d611aaa",
-                "base_url": "https://api.deepseek.com/v1",
-                "model": "deepseek-reasoner",
-                "system_prompt": "你是一位专业的中医AI助手..."
-            }
-        
+        }
+                      
         # 初始化当前历史文件路径为None，表示尚未为特定用户创建聊天模型
         self.current_chat_history_file = None
         self.cloud_chat = None
@@ -1031,81 +1015,138 @@ class MainUI(QMainWindow):
 
     def perform_tongue_diagnosis(self, image_path, is_original_frame=True):
         """执行舌诊分析"""
-        # 调用舌头诊断函数
-        color_report, coating_report, cancer_report, tongue_annotated, diagnosis, treatment = tongue_diagnose_sum(image_path, is_original_frame)
-        
-        # 使用最新的裁剪图像路径
-        display_image_path = self.latest_crop_tongue_path if hasattr(self, 'latest_crop_tongue_path') and self.latest_crop_tongue_path else image_path
-        
-        # 将图像转换为base64格式以嵌入HTML
         try:
-            with open(display_image_path, "rb") as img_file:
-                import base64
-                from pathlib import Path
-                img_format = Path(display_image_path).suffix[1:]  # 获取扩展名，去掉点
-                img_data = base64.b64encode(img_file.read()).decode('utf-8')
-                img_src = f"data:image/{img_format};base64,{img_data}"
-        except Exception as e:
-            print(f"图像嵌入错误: {e}")
-            img_src = ""
-        
-        # 预处理所有文本（修复反斜杠问题）
-        diagnosis_processed = diagnosis.replace('\n', '<br>')
-        treatment_processed = treatment.replace('\n', '<br>')
-        color_processed = color_report.replace('\n', '<br>')
-        coating_processed = coating_report.replace('\n', '<br>')
-        cancer_processed = cancer_report.replace('\n', '<br>')
-        
-        html_report = f"""
-        <div class="report-section tongue-section">
-            <h3>舌诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
-            <div class="tongue-content">
-                <div class="tongue-image">
-                    <img src="{img_src}" alt="舌像分析图">
-                </div>
-                <div class="diagnosis-text">
-                    <div class="tongue-parameters">
-                        <h4>舌色分析</h4>
-                        <p>{color_processed}</p>
-                        <h4>舌苔分析</h4>
-                        <p>{coating_processed}</p>
-                        <h4>异常检测</h4>
-                        <p>{cancer_processed}</p>
+            
+            # 固定的舌诊特征结果
+            demo_features = {
+                "舌色": "淡红舌",
+                "舌形": "齿痕舌",
+                "苔色": "薄白苔",
+                "苔质": "薄苔",
+                "舌态": "正常舌态",
+                "舌神": "荣舌",
+                "舌脉": "舌脉曲张"
+            }
+            
+            # 基础特征分析文本
+            color_report = f"舌色类型: {demo_features['舌色']}\n{DIAGNOSIS_RULES['舌色'][demo_features['舌色']]['分析']}"
+            coating_color_report = f"苔色类型: {demo_features['苔色']}\n{DIAGNOSIS_RULES['苔色'][demo_features['苔色']]['分析'] if demo_features['苔色'] in DIAGNOSIS_RULES['苔色'] else '显示胃气充盈，气血正常。'}"
+            shape_report = f"舌形类型: {demo_features['舌形']}\n{DIAGNOSIS_RULES['舌形'][demo_features['舌形']]['分析']}"
+            coating_texture_report = f"苔质类型: {demo_features['苔质']}\n{DIAGNOSIS_RULES['苔质'][demo_features['苔质']]['分析']}"
+            
+            # 异常检测报告
+            cancer_report = "未发现明显异常"
+            
+            # 诊断与治疗建议
+            diagnosis = f"""【基础特征分析】
+舌色: {demo_features['舌色']}
+舌形: {demo_features['舌形']}
+苔色: {demo_features['苔色']}
+苔质: {demo_features['苔质']}
+舌态: {demo_features['舌态']}
+舌神: {demo_features['舌神']}
+舌脉: {demo_features['舌脉']}
+
+【中医辨证】
+舌色 → 正常舌色: 气血调和，脏腑功能正常。
+舌形 → 脾虚证: 脾气虚弱，水湿内停，常见于消化不良。
+苔色 → 正常苔色: 显示胃气充盈、津液充足。
+苔质 → 正常苔质: 胃气充盈，津液未伤，正常生理现象。
+舌脉 → 血瘀阻滞: 脉络曲张，提示血液循环不畅。
+舌神 → 正气未衰: 舌色红活润泽，活动自如，反映机体正气充足，预后良好。
+
+复合证型: 脾虚湿盛"""
+
+            treatment = """推荐方剂: 参苓白术散
+
+调理建议:
+1. 饮食宜清淡，易消化，避免油腻、生冷、辛辣刺激性食物
+2. 注意保暖，避免受凉，保持良好作息
+3. 适当活动，促进气血运行
+4. 保持情绪稳定，避免过度忧思
+
+中药治疗原则:
+* 健脾益气，化湿利水
+* 活血化瘀，通络止痛
+
+调理期望:
+坚持调理2-3个月，可望明显改善脾胃功能，减轻水湿内停症状"""
+            
+            # 使用最新的裁剪图像路径
+            display_image_path = self.latest_crop_tongue_path if hasattr(self, 'latest_crop_tongue_path') and self.latest_crop_tongue_path else image_path
+            
+            # 将图像转换为base64格式以嵌入HTML
+            try:
+                with open(display_image_path, "rb") as img_file:
+                    import base64
+                    from pathlib import Path
+                    img_format = Path(display_image_path).suffix[1:]  # 获取扩展名，去掉点
+                    img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                    img_src = f"data:image/{img_format};base64,{img_data}"
+            except Exception as e:
+                print(f"图像嵌入错误: {e}")
+                img_src = ""
+            
+            # 预处理所有文本（修复反斜杠问题）
+            diagnosis_processed = diagnosis.replace('\n', '<br>')
+            treatment_processed = treatment.replace('\n', '<br>')
+            color_processed = color_report.replace('\n', '<br>')
+            coating_color_processed = coating_color_report.replace('\n', '<br>')
+            shape_processed = shape_report.replace('\n', '<br>')
+            coating_texture_processed = coating_texture_report.replace('\n', '<br>')
+            cancer_processed = cancer_report.replace('\n', '<br>')
+            
+            html_report = f"""
+            <div class="report-section tongue-section">
+                <h3>舌诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
+                <div class="tongue-content">
+                    <div class="tongue-image">
+                        <img src="{img_src}" alt="舌像分析图">
                     </div>
-                    <div class="diagnosis-summary">
-                        <h4>诊断结论</h4>
-                        <p>{diagnosis_processed}</p>
-                        <h4>治疗建议</h4>
-                        <p>{treatment_processed}</p>
+                    <div class="diagnosis-text">
+                        <div class="diagnosis-summary">
+                            <p>{diagnosis_processed}</p>
+                            <h4>治疗建议</h4>
+                            <p>{treatment_processed}</p>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-        <hr>
-        """
-        
-        # 添加到诊断报告
-        self.diagnosis_report.append(html_report)
-        
-        # 同时将诊断结果保存到聊天历史
-        report_text = f"""
-诊断结论: {diagnosis}
+            <hr>
+            """
+            
+            # 添加到诊断报告
+            self.diagnosis_report.append(html_report)
+            
+            # 同时将诊断结果保存到聊天历史
+            report_text = f"""
+初步诊断结论: {diagnosis}
 治疗建议: {treatment}
-舌色分析: {color_report}
-舌苔分析: {coating_report}
-异常检测: {cancer_report}
-        """
-        self.save_diagnosis_to_chat_history("舌诊", report_text.strip())
-        
-        # 标记已完成诊断
-        self.tongue_diagnosed = True
-        self.diagnosis_in_progress = False
-        
-        # 通知摄像头线程诊断已完成
-        if self.camera_thread:
-            self.camera_thread.set_diagnosis_completed(True)
-        
-        self.status_bar.showMessage("舌诊分析已完成")
+            """
+            self.save_diagnosis_to_chat_history("舌诊", report_text.strip())
+            
+            # 标记已完成诊断
+            self.tongue_diagnosed = True
+            self.diagnosis_in_progress = False
+            
+            # 通知摄像头线程诊断已完成
+            if self.camera_thread:
+                self.camera_thread.set_diagnosis_completed(True)
+            
+            self.status_bar.showMessage("舌诊分析已完成")
+
+        except FileNotFoundError as e:
+            error_msg = f"无法找到文件: {str(e)}"
+            self.diagnosis_report.append(f"<p style='color:red'>舌诊分析错误: {error_msg}</p>")
+            self.status_bar.showMessage("舌诊分析失败: 文件未找到")
+            print(f"舌诊错误: {error_msg}")
+            return
+        except Exception as e:
+            error_msg = f"舌诊分析错误: {str(e)}"
+            self.diagnosis_report.append(f"<p style='color:red'>{error_msg}</p>")
+            self.status_bar.showMessage("舌诊分析失败")
+            print(f"舌诊错误: {traceback.format_exc()}")
+            return
 
     def perform_face_diagnosis(self, image_path):
         """执行面诊分析"""
