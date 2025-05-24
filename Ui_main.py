@@ -33,7 +33,6 @@ import traceback
 import pyqtgraph as pg
 import numpy as np
 from tongue_diagnose_model.sum_predict_second import DIAGNOSIS_RULES
-from tongue_diagnose_model.diagnosis_helpers import get_diagnosis_report
 
 class AddUserDialog(QDialog):
     def __init__(self, parent=None):
@@ -1016,114 +1015,31 @@ class MainUI(QMainWindow):
     def perform_tongue_diagnosis(self, image_path, is_original_frame=True):
         """执行舌诊分析"""
         try:
+            selected_user = self.user_combo.currentText()
+            if selected_user == "无用户，请添加":
+                QtWidgets.QMessageBox.warning(self, '无用户', '请先添加用户。')
+                return
             
-            # 固定的舌诊特征结果
-            demo_features = {
-                "舌色": "淡红舌",
-                "舌形": "齿痕舌",
-                "苔色": "薄白苔",
-                "苔质": "薄苔",
-                "舌态": "正常舌态",
-                "舌神": "荣舌",
-                "舌脉": "舌脉曲张"
-            }
+            user_dir = os.path.join(self.patient_list_dp, selected_user)
             
-            # 基础特征分析文本
-            color_report = f"舌色类型: {demo_features['舌色']}\n{DIAGNOSIS_RULES['舌色'][demo_features['舌色']]['分析']}"
-            coating_color_report = f"苔色类型: {demo_features['苔色']}\n{DIAGNOSIS_RULES['苔色'][demo_features['苔色']]['分析'] if demo_features['苔色'] in DIAGNOSIS_RULES['苔色'] else '显示胃气充盈，气血正常。'}"
-            shape_report = f"舌形类型: {demo_features['舌形']}\n{DIAGNOSIS_RULES['舌形'][demo_features['舌形']]['分析']}"
-            coating_texture_report = f"苔质类型: {demo_features['苔质']}\n{DIAGNOSIS_RULES['苔质'][demo_features['苔质']]['分析']}"
+            # 确保使用最新的裁剪图像路径
+            if hasattr(self, 'latest_crop_tongue_path') and self.latest_crop_tongue_path:
+                # 优先使用裁剪后的舌头图像
+                crop_path = self.latest_crop_tongue_path
+            else:
+                # 如果没有裁剪图像，则使用原始图像
+                crop_path = image_path
             
-            # 异常检测报告
-            cancer_report = "未发现明显异常"
-            
-            # 诊断与治疗建议
-            diagnosis = f"""【基础特征分析】
-舌色: {demo_features['舌色']}
-舌形: {demo_features['舌形']}
-苔色: {demo_features['苔色']}
-苔质: {demo_features['苔质']}
-舌态: {demo_features['舌态']}
-舌神: {demo_features['舌神']}
-舌脉: {demo_features['舌脉']}
-
-【中医辨证】
-舌色 → 正常舌色: 气血调和，脏腑功能正常。
-舌形 → 脾虚证: 脾气虚弱，水湿内停，常见于消化不良。
-苔色 → 正常苔色: 显示胃气充盈、津液充足。
-苔质 → 正常苔质: 胃气充盈，津液未伤，正常生理现象。
-舌脉 → 血瘀阻滞: 脉络曲张，提示血液循环不畅。
-舌神 → 正气未衰: 舌色红活润泽，活动自如，反映机体正气充足，预后良好。
-
-复合证型: 脾虚湿盛"""
-
-            treatment = """推荐方剂: 参苓白术散
-
-调理建议:
-1. 饮食宜清淡，易消化，避免油腻、生冷、辛辣刺激性食物
-2. 注意保暖，避免受凉，保持良好作息
-3. 适当活动，促进气血运行
-4. 保持情绪稳定，避免过度忧思
-
-中药治疗原则:
-* 健脾益气，化湿利水
-* 活血化瘀，通络止痛
-
-调理期望:
-坚持调理2-3个月，可望明显改善脾胃功能，减轻水湿内停症状"""
-            
-            # 使用最新的裁剪图像路径
-            display_image_path = self.latest_crop_tongue_path if hasattr(self, 'latest_crop_tongue_path') and self.latest_crop_tongue_path else image_path
-            
-            # 将图像转换为base64格式以嵌入HTML
-            try:
-                with open(display_image_path, "rb") as img_file:
-                    import base64
-                    from pathlib import Path
-                    img_format = Path(display_image_path).suffix[1:]  # 获取扩展名，去掉点
-                    img_data = base64.b64encode(img_file.read()).decode('utf-8')
-                    img_src = f"data:image/{img_format};base64,{img_data}"
-            except Exception as e:
-                print(f"图像嵌入错误: {e}")
-                img_src = ""
-            
-            # 预处理所有文本（修复反斜杠问题）
-            diagnosis_processed = diagnosis.replace('\n', '<br>')
-            treatment_processed = treatment.replace('\n', '<br>')
-            color_processed = color_report.replace('\n', '<br>')
-            coating_color_processed = coating_color_report.replace('\n', '<br>')
-            shape_processed = shape_report.replace('\n', '<br>')
-            coating_texture_processed = coating_texture_report.replace('\n', '<br>')
-            cancer_processed = cancer_report.replace('\n', '<br>')
-            
-            html_report = f"""
-            <div class="report-section tongue-section">
-                <h3>舌诊分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h3>
-                <div class="tongue-content">
-                    <div class="tongue-image">
-                        <img src="{img_src}" alt="舌像分析图">
-                    </div>
-                    <div class="diagnosis-text">
-                        <div class="diagnosis-summary">
-                            <p>{diagnosis_processed}</p>
-                            <h4>治疗建议</h4>
-                            <p>{treatment_processed}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <hr>
-            """
+            # 调用舌诊分析函数
+            html_report, text_report, _ = tongue_diagnose_sum(
+                crop_path, user_dir=user_dir, use_model=True
+            )
             
             # 添加到诊断报告
             self.diagnosis_report.append(html_report)
             
             # 同时将诊断结果保存到聊天历史
-            report_text = f"""
-初步诊断结论: {diagnosis}
-治疗建议: {treatment}
-            """
-            self.save_diagnosis_to_chat_history("舌诊", report_text.strip())
+            self.save_diagnosis_to_chat_history("舌诊", text_report)
             
             # 标记已完成诊断
             self.tongue_diagnosed = True
@@ -1380,7 +1296,7 @@ class MainUI(QMainWindow):
             # 连接信号
             self.camera_thread.frame_received.connect(self.display_camera_frame)
             self.camera_thread.guidance_message.connect(self.show_guidance)
-            self.camera_thread.crop_tongue_saved_path.connect(self.handle_new_crop_image)
+            self.camera_thread.crop_tongue_saved_path.connect(self.handle_crop_tongue_path)
             self.camera_thread.original_frame_saved_path.connect(self.handle_original_frame)
             self.camera_thread.max_images_reached.connect(self.handle_max_images_reached)
             self.camera_thread.original_frame_saved_path.connect(self.handle_face_image)
@@ -1463,15 +1379,16 @@ class MainUI(QMainWindow):
             
             
 
-    def handle_new_crop_image(self, path):
-        """处理新的裁剪舌头图像"""
+    def handle_crop_tongue_path(self, path):
+        """处理裁剪后的舌头图像路径"""
         self.latest_crop_tongue_path = path
-        print(f"新裁剪舌头图像已保存: {path}")
-        
-        # 如果需要在界面上显示裁剪图像，可以在这里添加显示代码
-        # 例如:
-        # pixmap = QPixmap(path)
-        # self.some_label.setPixmap(pixmap.scaled(...))
+        # 可能还需要显示裁剪图像
+        pixmap = QPixmap(path)
+        self.video_display.setPixmap(pixmap.scaled(
+            self.video_display.width(), 
+            self.video_display.height(), 
+            QtCore.Qt.KeepAspectRatio
+        ))
 
     def handle_original_frame(self, original_path, crop_path):
         """处理保存的原始帧图像"""

@@ -503,7 +503,6 @@ def sum_predict(test_image):
         report_path, diagnosis, treatment
     )
 
-# 只在直接运行脚本时执行诊断，而不是在导入时
 if __name__ == "__main__":
     # 执行诊断
     result = sum_predict("img_3.png")
